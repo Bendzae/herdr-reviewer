@@ -43,6 +43,11 @@ message.
 
   ![Send dialog](screenshots/send-dialog.png)
 
+  The agent gets the whole review as one message, each comment with the
+  lines it is about, and the drafts are cleared.
+
+  ![The review in the agent's terminal](screenshots/review-in-agent.png)
+
 Everything the shipped panel did (file list, diff, commit box) stays.
 
 ## Install
