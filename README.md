@@ -38,10 +38,15 @@ message.
 - **Submit review** builds one message, sorted by file and line, each
   comment under a `### path, lines a-b` heading with the quoted lines, and
   hands it to a send dialog where you pick the agent, add a note and send.
-  Right-click a line to ask about just that line, or use "Ask about diff"
-  for the whole file.
 
   ![Send dialog](screenshots/send-dialog.png)
+
+- **Ask the agent about anything in the diff**, no review needed.
+  Right-click a line or a hunk header to ask about just that, or click
+  "Ask about diff" to send the whole open file's diff. The same dialog
+  opens with the lines attached, you type your question, and it lands in
+  the agent's terminal as one message. With no agent in the space it
+  starts Claude in a new tab with the text.
 
   The agent gets the whole review as one message, each comment with the
   lines it is about, and the drafts are cleared.
