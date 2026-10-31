@@ -10,12 +10,12 @@
 // The comment box is a card floating over the top-right of the diff (a
 // strip under it when the panel is narrow), so the rows never move: a
 // list row may hold no input, so the box can't sit between the lines.
-// Keys: "review-changes.submit", "review-changes.ask" (about the whole
-// diff), "review-changes.clear" (drops the draft comments); in the send
-// dialog (dialog.js) "review-changes.send" and "review-changes.close".
+// Keys: "reviewer.submit", "reviewer.ask" (about the whole
+// diff), "reviewer.clear" (drops the draft comments); in the send
+// dialog (dialog.js) "reviewer.send" and "reviewer.close".
 // The header's scope picker chooses what is reviewed: the uncommitted
 // changes, the last commit plus them, or everything on the branch since it
-// left its base (the pull-request view); "review-changes.scope" cycles it.
+// left its base (the pull-request view); "reviewer.scope" cycles it.
 // Props: { palette: "one-dark-pro" | "theme" | "dark-plus" (default: one-dark-pro),
 //          font_size: px (default: the terminal's font size minus one),
 //          base: the branch reviews are against (default: origin/HEAD, else main, else master) }.
@@ -35,7 +35,7 @@ function location() {
 }
 const key = () => JSON.stringify(location());
 const countLines = (text) => text ? text.split("\n").length - Number(text.endsWith("\n")) : 0;
-const NONE = "#00000000", SENT = "review-changes.sent", DRAFTS = "review-changes.drafts", SCOPE = "review-changes.scope";
+const NONE = "#00000000", SENT = "reviewer.sent", DRAFTS = "reviewer.drafts", SCOPE = "reviewer.scope";
 // The review scopes, in picker order. `ref` is what the working tree is diffed against.
 const SCOPES = ["work", "last", "branch"];
 // The code font: the terminal's (`font` in settings, JetBrains Mono when
@@ -486,13 +486,13 @@ export default class Changes extends View {
       { scope: "branch", label: i.base ? `vs ${i.base}` : "vs base branch", detail: i.merge ? `everything on ${i.branch} since it left ${i.base}` : i.base ? `on ${i.base} itself` : "no main or master branch", ok: Boolean(i.merge) },
     ];
     const box = h_flex().id("scope-box").h(24).px(8).gap(6).items_center().rounded(6).border_1().border_color(this.choosingScope ? t.accent : t.border).bg(t.raised).cursor_pointer().hover((s) => s.bg(t.hover))
-      .tooltip("What is reviewed: the uncommitted changes, the last commit, or the whole branch").child(div().text_size(12).child(this.scopeLabel())).child(svg("mods/review-changes/chevron-down.svg").size(11).text_color(t.dim));
+      .tooltip("What is reviewed: the uncommitted changes, the last commit, or the whole branch").child(div().text_size(12).child(this.scopeLabel())).child(svg("mods/reviewer/chevron-down.svg").size(11).text_color(t.dim));
     return Popover.new("scope").open(this.choosingScope).on_open_change((open, cx) => { this.choosingScope = open; cx.notify(); })
       .trigger(box)
       .content(v_flex().mt(4).min_w(260).p(6).gap(2).rounded(8).border_1().border_color(t.border).bg(t.popover).shadow_md().children(options.map((o) =>
         h_flex().id(`scope-${o.scope}`).px(10).py(7).gap(10).items_center().rounded(6).when(o.ok, (e) => e.cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.setScope(o.scope, cx))).when(!o.ok, (e) => e.opacity(0.5))
           .child(v_flex().flex_1().min_w(0).gap(2).child(div().text_size(12).child(o.label)).child(div().text_size(11).text_color(t.dim).truncate().child(o.detail)))
-          .child(o.scope === this.scope ? svg("mods/review-changes/check.svg").size(12).text_color(t.accent) : div().w(12)))));
+          .child(o.scope === this.scope ? svg("mods/reviewer/check.svg").size(12).text_color(t.accent) : div().w(12)))));
   }
 
   // A panel under 600px has no room for a column beside the diff.
@@ -598,7 +598,7 @@ export default class Changes extends View {
             .hover((s) => s.bg(k ? t.accent + "55" : t.hover).text_color(t.foreground))
             .tooltip(k ? `${k} draft comment${k > 1 ? "s" : ""} · click to comment on the whole file` : "Comment on the whole file")
             .on_click((_e, cx) => { cx.stop_propagation(); this.commentFile(f.path, cx); })
-            .when(Boolean(k), (e) => e.child(String(k))).child(svg("mods/review-changes/comment.svg").size(k ? 10 : 12)))
+            .when(Boolean(k), (e) => e.child(String(k))).child(svg("mods/reviewer/comment.svg").size(k ? 10 : 12)))
           .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`))).when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
       })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (this.loading ? "Loading changes…" : this.root ? "No uncommitted changes" : "No folder")))))
       .when(this.limited, el => el.child(div().px(12).py(4).text_size(11).text_color(t.dim).child("Showing the first 1,000 changed files")))

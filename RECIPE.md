@@ -1,4 +1,4 @@
-# review-changes
+# reviewer
 
 The shipped Changes panel, made for code review: every diff row is syntax
 colored (One Dark Pro by default), and the diff is reviewed like a pull
@@ -8,7 +8,7 @@ each with the lines it is about, to the agent running in the space as one
 message. It replaces `changes` in a layout; everything the shipped panel did
 (file list, diff, commit box) stays.
 
-![review-changes](preview.png)
+![reviewer](preview.png)
 
 ## What you see
 
@@ -118,14 +118,14 @@ fill, `foreground` text at 13px. Top to bottom:
   taken against the local branch when there is one, else `origin/<base>`.
   A repo opens in "vs main" when the branch has left the base, else
   "Uncommitted"; the choice is remembered per repo and machine in shared
-  `review-changes.scope`. The file list is `git diff <ref> --name-status`
+  `reviewer.scope`. The file list is `git diff <ref> --name-status`
   plus untracked files and conflicts from `git status`, sorted by path;
   counts come from `git diff <ref> --numstat`; a file's diff is `git diff
   <ref> -- path`. Switching scope closes the comment box and reloads.
   **Each scope has its own draft comments**: switching swaps the set shown
   (the badge, the inline cards and the file bubbles follow), the other
   scopes' drafts stay saved, and Submit and Discard act on the shown
-  scope's set only. `review-changes.scope` cycles the scopes the repo
+  scope's set only. `reviewer.scope` cycles the scopes the repo
   offers.
 - The first changed file's diff opens by itself; clicking a file opens it,
   clicking it again closes it. Untracked files show as one `+` hunk of the
@@ -153,7 +153,7 @@ fill, `foreground` text at 13px. Top to bottom:
 - **Click an inline comment** to edit it: the box opens with its text and
   lines, Save replaces it, Delete removes it.
 - Drafts survive a reload of the mod and a restart: they are kept in
-  shared state `review-changes.drafts` per repo, machine and scope (key
+  shared state `reviewer.drafts` per repo, machine and scope (key
   `<machine>:<root>:<scope>`; drafts saved under the older `<machine>:<root>`
   key are moved to the Uncommitted scope on first load), anchored to their
   lines by kind, number and text. A comment whose lines left the
@@ -169,7 +169,7 @@ fill, `foreground` text at 13px. Top to bottom:
   and `Comment: <text>`; a whole-file comment comes first for its file
   under `### path, whole file (added, binary)` (status and counts, no
   lines). Send in the dialog (or the direct fallback) sends
-  it; the dialog then sets shared `review-changes.sent`, and the panel
+  it; the dialog then sets shared `reviewer.sent`, and the panel
   clears the drafts. Cancelling the dialog keeps them. **Discard** drops
   them without sending.
 - **Ask about diff** (no drafts) sends the whole open diff the same way,
@@ -200,8 +200,8 @@ fill, `foreground` text at 13px. Top to bottom:
 - The dialog warns in `blocked` color above 8 KB of context: "This is N
   KB of text pasted into the agent's terminal; some agents are slow or cut
   it short at this size. Consider sending fewer comments at a time."
-- Key commands: `review-changes.submit`, `review-changes.ask`,
-  `review-changes.clear` (discard drafts), `review-changes.scope` (next
+- Key commands: `reviewer.submit`, `reviewer.ask`,
+  `reviewer.clear` (discard drafts), `reviewer.scope` (next
   scope). They reach shown copies only.
 
 ## Built from
@@ -241,8 +241,8 @@ fill, `foreground` text at 13px. Top to bottom:
   `{ path, from, to, editing }` with the same descriptors; `target()`
   resolves it against the open diff. `clickRow`, `editComment`,
   `addComment`, `deleteComment`, `closeComposer`, `setComments` (persists
-  to shared `review-changes.drafts` under `${machine}:${root}`), `submit`
-  (builds the message, calls `ask` with `sent: "review-changes.sent"`,
+  to shared `reviewer.drafts` under `${machine}:${root}`), `submit`
+  (builds the message, calls `ask` with `sent: "reviewer.sent"`,
   clears on "sent", or when `render` sees the shared key move past the
   submit time).
 - `v_virtual_list("changes-diff", items.length, sizes, key, render)` with
@@ -294,7 +294,7 @@ fill, `foreground` text at 13px. Top to bottom:
   opened on a removed line and closed on an added one colors the rows
   between as comment. Rare and harmless.
 - `===` and `||` draw as ligatures in JetBrains Mono, like in the terminal.
-- A mod command (`review-changes.submit`) is refused with "need the mod
+- A mod command (`reviewer.submit`) is refused with "need the mod
   loaded" while no copy is shown and for a second or two after any file in
   the mod folder changes (hot reload).
 - `hc send` wraps what it pastes in `<hc from="…">` tags; agents see the

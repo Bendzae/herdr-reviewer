@@ -1,4 +1,4 @@
-# review-changes
+# reviewer
 
 A [Herdr](https://herdr.dev) mod that turns the shipped Changes panel into
 a pull-request style review of your working tree. Diffs are syntax colored,
@@ -6,7 +6,7 @@ you click lines to leave comments, and "Submit review" sends every comment,
 with the lines it is about, to the agent running in the space as one
 message.
 
-![review-changes](preview.png)
+![reviewer](preview.png)
 
 ## What it does
 
@@ -52,14 +52,14 @@ Everything the shipped panel did (file list, diff, commit box) stays.
 
 ## Install
 
-1. Copy `mods/review-changes/` into `~/.config/herdr-app/mods/`.
-2. Run `herdr-app check ~/.config/herdr-app/mods/review-changes`.
-3. In your layout, replace the `changes` block's mod with `review-changes`
+1. Copy `mods/reviewer/` into `~/.config/herdr-app/mods/`.
+2. Run `herdr-app check ~/.config/herdr-app/mods/reviewer`.
+3. In your layout, replace the `changes` block's mod with `reviewer`
    (or add a new block for it). Herdr never overwrites it, since it is a
    clone of the shipped `changes` mod rather than the shipped mod itself.
 
 Or ask the agent in your Herdr window to add
-`herdr.dev/mods/vytasgavelis/review-changes`; the steps are in Herdr's
+`herdr.dev/mods/vytasgavelis/reviewer`; the steps are in Herdr's
 `AGENTS.md`.
 
 The mod runs `git` and `hc` (Herdr's terminal core) and reads files under
@@ -73,10 +73,10 @@ default):
 
 | Command | Does |
 |---|---|
-| `review-changes.submit` | Submit the shown scope's draft comments |
-| `review-changes.ask` | Ask the agent about the whole open diff |
-| `review-changes.clear` | Discard the shown scope's drafts |
-| `review-changes.scope` | Cycle to the next review scope |
+| `reviewer.submit` | Submit the shown scope's draft comments |
+| `reviewer.ask` | Ask the agent about the whole open diff |
+| `reviewer.clear` | Discard the shown scope's drafts |
+| `reviewer.scope` | Cycle to the next review scope |
 
 Block props: `palette` (`one-dark-pro`, `dark-plus` or `theme`),
 `font_size` (overrides the diff's size), `base` (the branch *vs main*
