@@ -129,7 +129,7 @@ export default class Changes extends View {
 
   refresh(cx) {
     if (this.loading || this.busy) return;
-    const { cwd, on } = location(), context = key();
+    const { cwd, on } = location(), context = key(), request = shared("reviewer.open");
     if (context !== this.context) {
       this.context = context; this.root = null; this.files = []; this.open = null; this.comments = []; this.composer = null;
       this.setLines([]); this.message = ""; this.input.set_value(""); this.error = null; this.note_ = null; this.watched = null; this.closed = false; this.limited = false;
@@ -195,6 +195,14 @@ export default class Changes extends View {
         if (changedSet) { this.comments = this.loadDrafts(scope); this.composer = null; }
         this.files = files; this.limited = changed.size > 1000; this.error = null;
         this.watch(root, cx);
+        const requested = this.requestedFile(request);
+        if (requested !== null) {
+          this.open = files.some(f => f.path === requested) ? requested : null;
+          this.closed = !this.open; this.composer = null; this.note_ = this.open ? null : "Requested file has no diff in this scope (or is outside the first 1,000 files).";
+          this.setLines([]);
+          if (this.open) this.scroll.scroll_to_item(0);
+          if (shared("reviewer.open")?.id === request.id) setShared("reviewer.open", null);
+        }
         if (this.open && !files.some((f) => f.path === this.open)) { this.open = null; this.setLines([]); }
         // The first file's diff shows until you pick another.
         if (!this.open && !this.closed && files.length) this.open = files[0].path;
@@ -205,6 +213,13 @@ export default class Changes extends View {
       } catch (e) { if (key() === context) this.error = String(e); }
       finally { this.loading = false; cx.notify(); }
     });
+  }
+
+  requestedFile(request) {
+    if (!this.root || typeof request?.id !== "string" || !request.id || typeof request.path !== "string" || (request.on ?? null) !== (this.on ?? null)) return null;
+    const windows = !this.on && /^[A-Za-z]:[\\/]/.test(this.root);
+    const root = (windows ? this.root.replaceAll("\\", "/") : this.root).replace(/\/$/, ""), path = windows ? request.path.replaceAll("\\", "/") : request.path;
+    return path.startsWith(root + "/") ? path.slice(root.length + 1) : null;
   }
 
   // The draft comments of one scope of the shown repo. Drafts saved before
@@ -568,7 +583,7 @@ export default class Changes extends View {
 
   render(cx) {
     if (this.dialog) return this.dialog.render(cx);
-    if (key() !== this.context) this.refresh(cx);
+    if (key() !== this.context || this.requestedFile(shared("reviewer.open")) !== null) this.refresh(cx);
     const size = codeSize();
     if (size !== this.fontSize) { this.fontSize = size; this.row = rowOf(size); this.measure(); }
     // The dialog reports a sent review through a shared key; the draft goes.

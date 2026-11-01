@@ -94,6 +94,29 @@ Block props: `palette` (`one-dark-pro`, `dark-plus` or `theme`),
 `font_size` (overrides the diff's size), `base` (the branch *vs main*
 compares against; default `origin/HEAD`, else `main`, else `master`).
 
+## Open a file from another mod
+
+Write a one-shot request with Herdr's `setShared`:
+
+```js
+setShared("reviewer.open", {
+  id: `${Date.now()}-${Math.random()}`,
+  path: "/absolute/path/to/repo/src/file.js",
+  on: null, // Remote machine ID for remote files; null for local files.
+});
+```
+
+Then reveal Reviewer's block using `layout.select` and `layout.show`.
+Reviewer selects the file and loads its diff after refreshing, including when
+a refresh or commit is already running. The request is consumed once; opening
+the same file again keeps its diff open. A newer request survives an older
+refresh. Requests for another repository or machine are left pending.
+
+The focused pane must already be in the target repository and machine.
+The current review scope stays selected and draft comments are preserved.
+If the requested file has no diff in that scope, or falls outside the first
+1,000 files, Reviewer shows a message instead of an unrelated diff.
+
 ## Recipe
 
 `RECIPE.md` is the brief this mod was built from: an agent with an empty
