@@ -41,6 +41,11 @@ const countLines = (text) => text ? text.split("\n").length - Number(text.endsWi
 const NONE = "#00000000", SENT = "reviewer.sent", DRAFTS = "reviewer.drafts", SCOPE = "reviewer.scope";
 // The review scopes, in picker order. `ref` is what the working tree is diffed against.
 const SCOPES = ["work", "last", "branch"];
+// Flags for the automatic git reads (the same ones Herdr's Changes panel
+// uses): never take index.lock, which an agent's commit may need at the same
+// moment; never start a repo's fsmonitor just because it got focus; never
+// rewrite the index from git diff. Clicked actions such as commit run as is.
+const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false"];
 // The code font: the terminal's (`font` in settings, JetBrains Mono when
 // unset), one size smaller than the terminal (`font_size`, 14 when unset);
 // `props.font_size` overrides. Rows and widths scale with it.
@@ -133,10 +138,10 @@ export default class Changes extends View {
     this.loading = true;
     cx.spawn(async (cx) => {
       try {
-        const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, on });
+        const top = await exec("git", [...READ, "rev-parse", "--show-toplevel"], { cwd, on });
         if (key() !== context) return;
         if (top.code !== 0) { this.root = null; this.files = []; this.setLines([]); this.open = null; this.error = "Not a git repository"; return; }
-        const root = top.stdout.trim(), git = (args) => exec("git", args, { cwd: root, on });
+        const root = top.stdout.trim(), git = (args) => exec("git", [...READ, ...args], { cwd: root, on });
         const status = await git(["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"]);
         if (status.code !== 0) throw new Error(status.stderr);
         const head = await git(["rev-parse", "--verify", "HEAD"]);
@@ -164,7 +169,10 @@ export default class Changes extends View {
           const names = await git(["diff", ref, "--name-status", "-z", "--no-renames"]);
           if (names.code !== 0) throw new Error(names.stderr);
           const parts = names.stdout.split("\0");
-          for (let i = 0; i + 1 < parts.length && parts[i]; i += 2) changed.set(parts[i + 1], parts[i][0]);
+          // With diff.autoRefreshIndex off, a file whose stat changed but whose
+          // content did not (touched, rewritten unchanged) is listed as M here
+          // with no numstat line, until something else refreshes the index.
+          for (let i = 0; i + 1 < parts.length && parts[i]; i += 2) { if (parts[i][0] !== "M" || stats[parts[i + 1]]) changed.set(parts[i + 1], parts[i][0]); }
         }
         const entries = status.stdout.split("\0").filter(Boolean);
         for (const entry of entries) {
@@ -265,7 +273,7 @@ export default class Changes extends View {
         lines = [`@@ -0,0 +1,${file.add} @@`, ...text.slice(0, 400000).replace(/\n$/, "").split("\n").slice(0, 1500).map(l => `+${l}`)];
       }
     } else {
-      const r = await exec("git", ["diff", ...(this.hasHead ? [this.ref ?? "HEAD"] : []), "--no-ext-diff", "--no-textconv", "--no-color", "--", path], { cwd: root, on });
+      const r = await exec("git", [...READ, "diff", ...(this.hasHead ? [this.ref ?? "HEAD"] : []), "--no-ext-diff", "--no-textconv", "--no-color", "--", path], { cwd: root, on });
       if (r.code !== 0) throw new Error(r.stderr);
       const all = r.stdout.replace(/\n$/, "").split("\n"), first = all.findIndex((l) => l.startsWith("@@"));
       lines = first < 0 ? [file.binary ? "Binary file changed" : "No text diff available"] : all.slice(first);

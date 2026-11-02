@@ -75,7 +75,7 @@ mod opened as an overlay of itself.
 
 The mod's version is the `version` field in `mods/reviewer/mod.json`, and
 each release is tagged `v<version>` in this repo. Installed copies carry no
-git history, so quote that field when reporting a problem. Version 0.1.0 was
+git history, so quote that field when reporting a problem. Version 0.1.1 was
 last tested on Herdr 0.1.11 (`herdr-app` 0.1.11, `herdr` 0.9.1).
 
 ## Commands and props
