@@ -121,7 +121,14 @@ fill, `foreground` text at 13px. Top to bottom:
   `reviewer.scope`. The file list is `git diff <ref> --name-status`
   plus untracked files and conflicts from `git status`, sorted by path;
   counts come from `git diff <ref> --numstat`; a file's diff is `git diff
-  <ref> -- path`. Switching scope closes the comment box and reloads.
+  <ref> -- path`. These automatic reads run with the flags Herdr's own
+  Changes panel uses (`--no-optional-locks -c core.fsmonitor=false -c
+  diff.autoRefreshIndex=false`), so focusing a repo never takes
+  `index.lock` from an agent's commit, starts its fsmonitor, or rewrites
+  its index; a `--name-status` entry with no `--numstat` line is a file
+  whose stat changed but whose content did not, and is skipped. Clicked
+  actions such as commit run without them. Switching scope closes the
+  comment box and reloads.
   **Each scope has its own draft comments**: switching swaps the set shown
   (the badge, the inline cards and the file bubbles follow), the other
   scopes' drafts stay saved, and Submit and Discard act on the shown
