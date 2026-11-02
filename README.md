@@ -91,3 +91,9 @@ compares against; default `origin/HEAD`, else `main`, else `master`).
 
 `RECIPE.md` is the brief this mod was built from: an agent with an empty
 folder can rebuild it from there.
+
+## License
+
+MIT, see [LICENSE](LICENSE). The mod started as a clone of Herdr's shipped
+`changes` mod (Apache-2.0) and uses Lucide icons (ISC); see
+[THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES).

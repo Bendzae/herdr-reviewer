@@ -1,3 +1,6 @@
+// Modified from Herdr's shipped "changes" mod (0.1.8), Apache License 2.0.
+// Changes by Vytas Gavelis, MIT License. See LICENSE and THIRD-PARTY-NOTICES.
+//
 // Changes, for code review: the diff rows are syntax colored (highlight.js,
 // palette.js), and the diff is reviewed like a pull request: click a line
 // (two clicks for a range, a @@ header for its hunk) to open the comment
