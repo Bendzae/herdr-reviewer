@@ -16,7 +16,9 @@ keys), in the same commit or PR:
 1. Bump `version` in `mods/reviewer/mod.json`.
 2. Update the Versions section of `README.md` with the Herdr version it was
    tested on (`herdr-app --version` and `herdr --version`).
-3. Run `herdr-app check mods/reviewer` and try the mod in the app.
+3. Run `scripts/install.sh` (copies the mod into Herdr and runs
+   `herdr-app check`; never symlink, Herdr won't reload a link) and try
+   the mod in the app.
 4. Keep `RECIPE.md` in step with the code; on a mismatched Herdr version the
    recipe is what users get.
 

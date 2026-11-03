@@ -57,8 +57,13 @@ Everything the shipped panel did (file list, diff, commit box) stays.
 
 ## Install
 
-1. Copy `mods/reviewer/` into `~/.config/herdr-app/mods/`.
-2. Run `herdr-app check ~/.config/herdr-app/mods/reviewer`.
+1. Run `scripts/install.sh`. It copies `mods/reviewer/` into
+   `~/.config/herdr-app/mods/` (or `$HERDR_APP_HOME/mods/`) and runs
+   `herdr-app check` on the copy. Without the script: copy the folder by
+   hand and run `herdr-app check ~/.config/herdr-app/mods/reviewer`. Don't
+   symlink it; Herdr loads a linked folder but never reloads it.
+2. Run the script again after each update or checkout; Herdr reloads the
+   panel in place.
 3. In your layout, replace the `changes` block's mod with `reviewer`
    (or add a new block for it). Herdr never overwrites it, since it is a
    clone of the shipped `changes` mod rather than the shipped mod itself.
