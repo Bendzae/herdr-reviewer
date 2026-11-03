@@ -75,7 +75,7 @@ mod opened as an overlay of itself.
 
 The mod's version is the `version` field in `mods/reviewer/mod.json`, and
 each release is tagged `v<version>` in this repo. Installed copies carry no
-git history, so quote that field when reporting a problem. Version 0.1.1 was
+git history, so quote that field when reporting a problem. Version 0.2.0 was
 last tested on Herdr 0.1.11 (`herdr-app` 0.1.11, `herdr` 0.9.1).
 
 ## Commands and props
@@ -101,6 +101,7 @@ Write a one-shot request with Herdr's `setShared`:
 ```js
 setShared("reviewer.open", {
   id: `${Date.now()}-${Math.random()}`,
+  at: Date.now(),
   path: "/absolute/path/to/repo/src/file.js",
   on: null, // Remote machine ID for remote files; null for local files.
 });
@@ -110,7 +111,9 @@ Then reveal Reviewer's block using `layout.select` and `layout.show`.
 Reviewer selects the file and loads its diff after refreshing, including when
 a refresh or commit is already running. The request is consumed once; opening
 the same file again keeps its diff open. A newer request survives an older
-refresh. Requests for another repository or machine are left pending.
+refresh. A request for another repository or machine waits until the
+reviewer shows that repository, for up to 30 seconds; after that it is
+dropped, as is one without `at`.
 
 The focused pane must already be in the target repository and machine.
 The current review scope stays selected and draft comments are preserved.

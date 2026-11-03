@@ -210,6 +210,14 @@ fill, `foreground` text at 13px. Top to bottom:
 - Key commands: `reviewer.submit`, `reviewer.ask`,
   `reviewer.clear` (discard drafts), `reviewer.scope` (next
   scope). They reach shown copies only.
+- Another mod opens a file's diff by setting shared `reviewer.open` to
+  `{ id, at: Date.now(), path, on }` (an absolute path on machine `on`,
+  null for local). `render` starts a refresh when the request is for the
+  shown repo and machine and its id was not tried yet; the refresh selects
+  the file (or shows "Requested file has no diff in this scope" and keeps
+  the scope and drafts) and clears the key when it still holds that id. A
+  request for another repo waits until the panel shows it; one older than
+  30 seconds, or without `at`, is cleared unread.
 
 ## Built from
 
