@@ -16,6 +16,11 @@
 // Keys: "reviewer.submit", "reviewer.ask" (about the whole
 // diff), "reviewer.clear" (drops the draft comments); in the send
 // dialog (dialog.js) "reviewer.send" and "reviewer.close".
+// Another mod opens a file's diff by setting shared "reviewer.open" to
+// { id, at: Date.now(), path (absolute), on (machine or null) }: the panel
+// picks it up on its next refresh, selects the file (or notes that it has no
+// diff in the shown scope) and clears the key. A request older than OPEN_TTL
+// is dropped unread, so a stale one never fires when the repo gets focus later.
 // The header's scope picker chooses what is reviewed: the uncommitted
 // changes, the last commit plus them, or everything on the branch since it
 // left its base (the pull-request view); "reviewer.scope" cycles it.
@@ -41,6 +46,7 @@ const countLines = (text) => text ? text.split("\n").length - Number(text.endsWi
 const NONE = "#00000000", SENT = "reviewer.sent", DRAFTS = "reviewer.drafts", SCOPE = "reviewer.scope";
 // The review scopes, in picker order. `ref` is what the working tree is diffed against.
 const SCOPES = ["work", "last", "branch"];
+const OPEN = "reviewer.open", OPEN_TTL = 30_000;
 // Flags for the automatic git reads (the same ones Herdr's Changes panel
 // uses): never take index.lock, which an agent's commit may need at the same
 // moment; never start a repo's fsmonitor just because it got focus; never
@@ -129,7 +135,10 @@ export default class Changes extends View {
 
   refresh(cx) {
     if (this.loading || this.busy) return;
-    const { cwd, on } = location(), context = key(), request = shared("reviewer.open");
+    const { cwd, on } = location(), context = key(), request = shared(OPEN);
+    // The request this refresh answers; render never starts another refresh
+    // for the same id, so a repo whose git keeps failing is read once, not in a loop.
+    this.tried = request?.id ?? this.tried;
     if (context !== this.context) {
       this.context = context; this.root = null; this.files = []; this.open = null; this.comments = []; this.composer = null;
       this.setLines([]); this.message = ""; this.input.set_value(""); this.error = null; this.note_ = null; this.watched = null; this.closed = false; this.limited = false;
@@ -201,7 +210,7 @@ export default class Changes extends View {
           this.closed = !this.open; this.composer = null; this.note_ = this.open ? null : "Requested file has no diff in this scope (or is outside the first 1,000 files).";
           this.setLines([]);
           if (this.open) this.scroll.scroll_to_item(0);
-          if (shared("reviewer.open")?.id === request.id) setShared("reviewer.open", null);
+          if (shared(OPEN)?.id === request.id) setShared(OPEN, null);
         }
         if (this.open && !files.some((f) => f.path === this.open)) { this.open = null; this.setLines([]); }
         // The first file's diff shows until you pick another.
@@ -215,11 +224,18 @@ export default class Changes extends View {
     });
   }
 
+  // A request's path relative to the shown repo, or null when it is not for
+  // this repo and machine (or is stale). Windows paths compare case-insensitively.
   requestedFile(request) {
-    if (!this.root || typeof request?.id !== "string" || !request.id || typeof request.path !== "string" || (request.on ?? null) !== (this.on ?? null)) return null;
+    if (!this.root || this.stale(request) || typeof request.path !== "string" || (request.on ?? null) !== (this.on ?? null)) return null;
     const windows = !this.on && /^[A-Za-z]:[\\/]/.test(this.root);
     const root = (windows ? this.root.replaceAll("\\", "/") : this.root).replace(/\/$/, ""), path = windows ? request.path.replaceAll("\\", "/") : request.path;
-    return path.startsWith(root + "/") ? path.slice(root.length + 1) : null;
+    const fold = (s) => windows ? s.toLowerCase() : s;
+    return fold(path).startsWith(fold(root) + "/") ? path.slice(root.length + 1) : null;
+  }
+  // Malformed, or older than OPEN_TTL: dropped, whichever repo it was for.
+  stale(request) {
+    return typeof request?.id !== "string" || !request.id || typeof request.at !== "number" || Date.now() - request.at > OPEN_TTL;
   }
 
   // The draft comments of one scope of the shown repo. Drafts saved before
@@ -583,7 +599,9 @@ export default class Changes extends View {
 
   render(cx) {
     if (this.dialog) return this.dialog.render(cx);
-    if (key() !== this.context || this.requestedFile(shared("reviewer.open")) !== null) this.refresh(cx);
+    const request = shared(OPEN);
+    if (request != null && this.stale(request)) cx.timer.after(1, () => setShared(OPEN, null));
+    else if (key() !== this.context || (request?.id !== this.tried && this.requestedFile(request) !== null)) this.refresh(cx);
     const size = codeSize();
     if (size !== this.fontSize) { this.fontSize = size; this.row = rowOf(size); this.measure(); }
     // The dialog reports a sent review through a shared key; the draft goes.
