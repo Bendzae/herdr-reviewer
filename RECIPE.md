@@ -192,12 +192,15 @@ fill, `foreground` text at 13px. Top to bottom:
   growing to 4 with context); the context, read-only, captioned "Sent
   after your note · N lines · read-only" with a Copy link (copy icon,
   "Copied" with a check once clicked), scrolling both ways; a bottom row
-  with the hint "cmd-enter sends · goes to Claude Code as one message",
+  with the hint "cmd-enter sends · goes to <agent name> as one message",
   Cancel and **Send**. Send pastes note and context as one message with
   `hc send` (asking "Send anyway" first when the agent is working or
   blocked, then `--force`), closes, toasts "Sent to …", sets the `sent`
   shared key and focuses the agent's pane. With no agent in the space,
-  Send starts Claude in a new tab with the text. Should the overlay fail
+  Send asks `knownAgents({ on: space.machine })` for the most-used installed
+  agent and starts its `run` argv in a new tab with the text. While checking,
+  disable Send. If discovery fails or no agent is installed, keep the dialog
+  and its text open and show the error. Should the overlay fail
   to open, the text goes straight to the space's agent (`hc send`) with a
   toast; with no agent, a warning toast says so.
 - Agent status does not change this panel; the dialog shows it.

@@ -12,7 +12,7 @@
 // Enter or cmd-enter sends, Esc closes. Commands: "reviewer.send", "reviewer.close".
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextareaState, Textarea, Popover } from "gpui-base";
-import { agents, focused, hc, run, notify, props, closeOverlay, theme, settings, nextCommand, setShared } from "herdr";
+import { agents, focused, spaces, knownAgents, hc, run, notify, props, closeOverlay, theme, settings, nextCommand, setShared } from "herdr";
 
 const DOT = { working: "working", blocked: "blocked", done: "done", idle: "idle" };
 
@@ -21,7 +21,7 @@ export class Dialog {
     const p = props() ?? {};
     this.context = String(p.context ?? ""); this.title = p.title ?? "";
     this.note = ""; this.pick = null; this.error = null; this.sending = false; this.confirm = false; this.choosing = false; this.copied = false;
-    this.input = TextareaState.new({ placeholder: this.context ? "Your note to the agent (optional)…" : "What do you want to ask?", rows: this.context ? 2 : 3 });
+    this.input = TextareaState.new({ placeholder: this.context ? "Your note to the agent (optional)" : "What do you want to ask?", rows: this.context ? 2 : 3 });
     this.input.set_auto_grow(this.context ? 2 : 3, this.context ? 4 : 6);
     this.input.on("change", (_e, cx) => { this.note = this.input.value(); this.error = null; this.confirm = false; cx.notify(); });
     this.input.on("submit", (_e, cx) => this.send(cx));
@@ -72,14 +72,23 @@ export class Dialog {
     });
   }
 
-  // No agent here: start Claude in a new tab with the text as its first message.
+  // Herdr orders known agents by use; check installation on this space's machine.
   start(cx) {
-    const f = focused(), text = this.text();
-    if (!f?.space) { this.error = "No space is shown"; cx.notify(); return; }
-    this.close();
-    run("tab.new", { space: f.space, argv: ["claude"], task: text });
-    if (props()?.sent) setShared(props().sent, Date.now());
-    notify({ title: "Started Claude with your question", level: "success" });
+    const space = spaces().find(s => s.id === focused()?.space), text = this.text();
+    if (!space) { this.error = "No space is shown"; cx.notify(); return; }
+    this.sending = true; this.error = null; cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        const agent = (await knownAgents({ on: space.machine })).find(a => a.installed);
+        if (!agent) throw new Error("No agent is installed on this machine. Install an agent first.");
+        run("tab.new", { space: space.id, argv: agent.run, task: text });
+        this.close();
+        if (props()?.sent) setShared(props().sent, Date.now());
+        notify({ title: `Started ${agent.name} with your question`, level: "success" });
+      }
+      catch (e) { this.error = String(e.message ?? e); }
+      finally { this.sending = false; cx.notify(); }
+    });
   }
 
   render(cx) {
@@ -110,7 +119,7 @@ export class Dialog {
         .child(div().text_size(11).text_color(t.dim).child("Esc")))
       // Who gets it: a dropdown showing the focused agent; open it to pick another in the space.
       .child(!list.length
-        ? div().text_size(12).text_color(t.muted).child("No agent is running in this space. Send starts Claude in a new tab with your question.")
+        ? div().text_size(12).text_color(t.muted).child("No agent is running in this space. Send starts the most-used installed agent on this machine in a new tab.")
         : h_flex().gap(8).items_center()
             .child(div().text_size(11.5).text_color(t.dim).child("To"))
             .child(list.length > 1
@@ -143,6 +152,6 @@ export class Dialog {
         .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(this.confirm ? t.blocked : t.dim)
           .child(this.confirm && agent ? `${name(agent)} is ${agent.status}. Send anyway? The text is typed into its input now.` : agent ? `cmd-enter sends · goes to ${name(agent)} as one message` : "cmd-enter sends"))
         .child(button("ask-cancel", "Cancel", false, () => this.close()))
-        .child(button("ask-send", this.sending ? "Sending…" : this.confirm ? "Send anyway" : agent ? "Send" : "Start Claude", true, (_e, cx) => this.send(cx), this.sending)));
+        .child(button("ask-send", this.sending ? "Sending…" : this.confirm ? "Send anyway" : agent ? "Send" : "Start agent", true, (_e, cx) => this.send(cx), this.sending)));
   }
 }

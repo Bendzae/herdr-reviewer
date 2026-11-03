@@ -46,7 +46,9 @@ message.
   "Ask about diff" to send the whole open file's diff. The same dialog
   opens with the lines attached, you type your question, and it lands in
   the agent's terminal as one message. With no agent in the space it
-  starts Claude in a new tab with the text.
+  starts the most-used installed agent on that space’s machine in a new tab
+  with the text. If no agent is installed or discovery fails, the dialog
+  keeps your text and shows an error.
 
   The agent gets the whole review as one message, each comment with the
   lines it is about, and the drafts are cleared.
