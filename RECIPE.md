@@ -199,8 +199,9 @@ fill, `foreground` text at 13px. Top to bottom:
   shared key and focuses the agent's pane. With no agent in the space,
   Send asks `knownAgents({ on: space.machine })` for the most-used installed
   agent and starts its `run` argv in a new tab with the text. While checking,
-  disable Send. If discovery fails or no agent is installed, keep the dialog
-  and its text open and show the error. Should the overlay fail
+  disable Send; Esc or Cancel still close the dialog and then nothing is
+  started. If discovery fails or no agent is installed, keep the dialog and
+  its text open and show the error, naming the space's machine. Should the overlay fail
   to open, the text goes straight to the space's agent (`hc send`) with a
   toast; with no agent, a warning toast says so.
 - Agent status does not change this panel; the dialog shows it.

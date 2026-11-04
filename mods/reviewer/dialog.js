@@ -14,14 +14,17 @@ import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextareaState, Textarea, Popover } from "gpui-base";
 import { agents, focused, spaces, knownAgents, hc, run, notify, props, closeOverlay, theme, settings, nextCommand, setShared } from "herdr";
 
+// Where agents are looked up and started: the space's machine, which may not be this one.
+const where = (space) => space?.machine ? `on ${space.machine}` : "on this machine";
+
 const DOT = { working: "working", blocked: "blocked", done: "done", idle: "idle" };
 
 export class Dialog {
   init(_props, cx) {
     const p = props() ?? {};
     this.context = String(p.context ?? ""); this.title = p.title ?? "";
-    this.note = ""; this.pick = null; this.error = null; this.sending = false; this.confirm = false; this.choosing = false; this.copied = false;
-    this.input = TextareaState.new({ placeholder: this.context ? "Your note to the agent (optional)" : "What do you want to ask?", rows: this.context ? 2 : 3 });
+    this.note = ""; this.pick = null; this.error = null; this.sending = false; this.closed = false; this.confirm = false; this.choosing = false; this.copied = false;
+    this.input = TextareaState.new({ placeholder: this.context ? "Your note to the agent (optional)…" : "What do you want to ask?", rows: this.context ? 2 : 3 });
     this.input.set_auto_grow(this.context ? 2 : 3, this.context ? 4 : 6);
     this.input.on("change", (_e, cx) => { this.note = this.input.value(); this.error = null; this.confirm = false; cx.notify(); });
     this.input.on("submit", (_e, cx) => this.send(cx));
@@ -38,7 +41,12 @@ export class Dialog {
     });
   }
 
-  close() { closeOverlay(props().overlay); }
+  close() { this.closed = true; closeOverlay(props().overlay); }
+  // The text went out: close, tell the caller through the `sent` key, toast.
+  done(title) {
+    this.close(); notify({ title, body: this.title || this.note.trim().slice(0, 80), level: "success" });
+    if (props()?.sent) setShared(props().sent, Date.now());
+  }
 
   // The agents in this space; the picked one, else the focused, else an idle one, else the first.
   candidates() {
@@ -64,29 +72,29 @@ export class Dialog {
       const r = await hc(["send", ...(busy ? ["--force"] : []), agent.address, text]).catch((e) => ({ code: 1, stdout: "", stderr: String(e) }));
       this.sending = false;
       if (r.code === 0) {
-        this.close(); notify({ title: `Sent to ${name}`, body: this.title || this.note.trim().slice(0, 80), level: "success" });
-        if (props()?.sent) setShared(props().sent, Date.now());
+        this.done(`Sent to ${name}`);
         run("pane.focus", { terminal: agent.address });
       }
       else { this.error = (r.stderr || r.stdout).trim().slice(0, 300) || "hc send failed"; this.confirm = false; cx.notify(); }
     });
   }
 
-  // Herdr orders known agents by use; check installation on this space's machine.
+  // Herdr orders known agents by use; the first installed one on the space's
+  // machine is started. The lookup can take seconds on a remote machine, and
+  // Esc or Cancel in the meantime wins: nothing is started once closed.
   start(cx) {
-    const space = spaces().find(s => s.id === focused()?.space), text = this.text();
+    const space = spaces().find((s) => s.id === focused()?.space), text = this.text();
     if (!space) { this.error = "No space is shown"; cx.notify(); return; }
     this.sending = true; this.error = null; cx.notify();
     cx.spawn(async (cx) => {
       try {
-        const agent = (await knownAgents({ on: space.machine })).find(a => a.installed);
-        if (!agent) throw new Error("No agent is installed on this machine. Install an agent first.");
+        const agent = (await knownAgents({ on: space.machine })).find((a) => a.installed);
+        if (this.closed) return;
+        if (!agent) { this.error = `No agent is installed ${where(space)}. Install one first.`; return; }
         run("tab.new", { space: space.id, argv: agent.run, task: text });
-        this.close();
-        if (props()?.sent) setShared(props().sent, Date.now());
-        notify({ title: `Started ${agent.name} with your question`, level: "success" });
+        this.done(`Started ${agent.name} with your question`);
       }
-      catch (e) { this.error = String(e.message ?? e); }
+      catch (e) { this.error = String(e?.message || e).trim().slice(0, 300) || "Could not start an agent"; }
       finally { this.sending = false; cx.notify(); }
     });
   }
@@ -119,7 +127,7 @@ export class Dialog {
         .child(div().text_size(11).text_color(t.dim).child("Esc")))
       // Who gets it: a dropdown showing the focused agent; open it to pick another in the space.
       .child(!list.length
-        ? div().text_size(12).text_color(t.muted).child("No agent is running in this space. Send starts the most-used installed agent on this machine in a new tab.")
+        ? div().text_size(12).text_color(t.muted).child(`No agent is running in this space. Send starts the most-used installed agent ${where(spaces().find((s) => s.id === focused()?.space))} in a new tab.`)
         : h_flex().gap(8).items_center()
             .child(div().text_size(11.5).text_color(t.dim).child("To"))
             .child(list.length > 1
