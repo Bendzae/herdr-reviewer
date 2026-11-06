@@ -20,8 +20,9 @@ fill, `foreground` text at 13px. Top to bottom:
   6px corners: an "N files" chip (1px `border`, `muted` text, 8px side
   padding), then the **scope picker**: a select-looking box (`raised`,
   1px `border`, `accent` while open) reading "Uncommitted", "Last commit"
-  or "vs main" with an 11px chevron; it is a `Popover` whose list (260px,
-  `popover` fill, 6px padding, 8px corners, shadow) has three rows 2px
+  or "vs main" with an 11px chevron; it is a `Popover` whose list
+  (260–380px wide, long details cut with an ellipsis, `popover` fill,
+  6px padding, 8px corners, shadow) has three rows 2px
   apart, each 10px side and 7px top/bottom padding holding a 12px label
   over an 11px `dim` detail — "working tree vs HEAD";
   "e29daef · <subject>, plus uncommitted"; "everything on <branch> since
