@@ -227,7 +227,12 @@ fill, `foreground` text at 13px. Top to bottom:
 ## Built from
 
 - A clone of the shipped `changes` mod (`mod.clone`, 0.1.8), so `mod.json`
-  is `{ "place": "none", "cloned_from": { "name": "changes", "version": "0.1.8" } }`.
+  is `{ "place": "none", "cloned_from": { "name": "changes", "version": "0.1.8" } }`
+  plus `version`. Keep `"none"`: Herdr won't dock a new mod into a shipped
+  layout, and in a personal one `"right"` docks it at the window's edge,
+  not in the Changes panel's spot. Instead the mod takes the `changes`
+  block's place in a personal layout (the repo's `scripts/install.sh` clones
+  a shipped layout as `<name>-reviewer` and swaps the block's mod).
   `main.js` keeps the clone's structure: `location()` keyed on the focused
   pane's `cwd` and machine, `refresh` (git `rev-parse`, `status
   --porcelain=v1 -z`, `diff --numstat`), `load` (git `diff HEAD -- path`,

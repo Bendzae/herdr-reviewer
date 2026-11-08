@@ -64,15 +64,29 @@ Everything the shipped panel did (file list, diff, commit box) stays.
    `herdr-app check` on the copy. Without the script: copy the folder by
    hand and run `herdr-app check ~/.config/herdr-app/mods/reviewer`. Don't
    symlink it; Herdr loads a linked folder but never reloads it.
-2. Run the script again after each update or checkout; Herdr reloads the
-   panel in place.
-3. In your layout, replace the `changes` block's mod with `reviewer`
-   (or add a new block for it). Herdr never overwrites it, since it is a
-   clone of the shipped `changes` mod rather than the shipped mod itself.
+2. With Herdr open, the script then puts Reviewer where the Changes panel
+   is: it swaps the `changes` block in the shown layout for `reviewer`, so
+   the Changes button in the tab bar opens Reviewer. Herdr's own layouts
+   are read-only, so if you are on one (such as the default `main`) the
+   script clones it as `<name>-reviewer` and switches to it; the clone
+   keeps your sizes and look. A layout you cloned yourself is edited in
+   place. Pass `--no-layout` to skip this step.
+3. Run the script again after each update or checkout; Herdr reloads the
+   panel in place. It leaves a layout that already shows `reviewer` alone.
+
+Without the script, or with Herdr closed, do step 2 by hand: in your own
+layout (`herdr-app do layout.clone '{"name":"main","as":"main-reviewer"}'`
+if you are on a shipped one), replace the `changes` block's mod with
+`reviewer`, or add a new block for it. Herdr never overwrites it, since it
+is a clone of the shipped `changes` mod rather than the shipped mod itself.
 
 Or ask the agent in your Herdr window to add
 `herdr.dev/mods/vytasgavelis/reviewer`; the steps are in Herdr's
-`AGENTS.md`.
+`AGENTS.md`. Those steps only copy the folder, so ask it to swap the
+`changes` block as above too. Reviewer's `mod.json` has `"place": "none"`
+because Herdr can't dock a new mod into a shipped layout, and in a
+personal one it would dock at the window's edge, not in the Changes
+panel's spot.
 
 The mod runs `git` and `hc` (Herdr's terminal core) and reads files under
 the repo it shows. It needs nothing else installed: the send dialog is the
@@ -82,8 +96,8 @@ mod opened as an overlay of itself.
 
 The mod's version is the `version` field in `mods/reviewer/mod.json`, and
 each release is tagged `v<version>` in this repo. Installed copies carry no
-git history, so quote that field when reporting a problem. Version 0.3.1 was
-last tested on Herdr 0.1.12 (`herdr-app` 0.1.12, `herdr` 0.9.1).
+git history, so quote that field when reporting a problem. Version 0.4.0 was
+last tested on Herdr 0.1.13 (`herdr-app` 0.1.13, `herdr` 0.9.5).
 
 ## Commands and props
 
