@@ -27,7 +27,8 @@ them are also available under the MIT License.
 
 The SVG icons in mods/reviewer (changes.svg, check.svg, chevron-down.svg,
 comment.svg, copy.svg) are from Lucide (https://lucide.dev), as shipped with
-Herdr.
+Herdr; fold-vertical.svg and unfold-vertical.svg are from Lucide's own
+repository.
 
 ISC License
 

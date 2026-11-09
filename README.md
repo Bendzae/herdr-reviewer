@@ -13,6 +13,10 @@ message.
 - **Syntax-colored diffs** in One Dark Pro (or `dark-plus`, or your
   terminal theme's ansi colors), with line numbers, hunk headers and
   clearly tinted added and removed rows.
+- **The whole file, not just the hunks.** The unchanged lines between the
+  changes are folded into "N unchanged lines" rows; click one to show
+  those lines, or turn on *Full file* in the header to scroll the whole
+  file like an editor's diff view (remembered).
 - **Four review scopes**: *Uncommitted* (working tree vs `HEAD`),
   *Last commit* (that commit plus whatever is uncommitted), *vs main*
   (everything since the branch left its base, committed or not), or any
@@ -73,19 +77,20 @@ Everything the shipped panel did (file list, diff, commit box) stays.
    script clones it as `<name>-reviewer` and switches to it; the clone
    keeps your sizes and look. A layout you cloned yourself is edited in
    place. It also lifts the panel's 900px width cap so you can drag it
-   wider, and keeps the terminal area at least 480px wide instead (this
-   step needs `python3`; without it the cap stays). Pass `--no-layout` to
-   skip this step.
+   wider; the terminals beside it narrow as it grows (this step needs
+   `python3`; without it the cap stays). Pass `--no-layout` to skip this
+   step.
 3. Run the script again after each update or checkout; Herdr reloads the
    panel in place. In a layout that already shows `reviewer` it only lifts
-   the width cap, if that hasn't been done.
+   the width cap, if that hasn't been done, and takes out the 480px
+   minimum 0.5.1 gave the terminal area, which pushed a wide panel out of
+   the window.
 
 Without the script, or with Herdr closed, do step 2 by hand: in your own
 layout (`herdr-app do layout.clone '{"name":"main","as":"main-reviewer"}'`
 if you are on a shipped one), replace the `changes` block's mod with
 `reviewer`, or add a new block for it. For a wider panel, raise `"max"`
-on the node that holds it (`panel` in `main`) and give its sibling
-(`main`) a `"min"` so the terminals keep some room. Herdr never overwrites it, since it
+on the node that holds it (`panel` in `main`). Herdr never overwrites it, since it
 is a clone of the shipped `changes` mod rather than the shipped mod itself.
 
 Or ask the agent in your Herdr window to add
@@ -104,7 +109,7 @@ mod opened as an overlay of itself.
 
 The mod's version is the `version` field in `mods/reviewer/mod.json`, and
 each release is tagged `v<version>` in this repo. Installed copies carry no
-git history, so quote that field when reporting a problem. Version 0.5.1 was
+git history, so quote that field when reporting a problem. Version 0.6.0 was
 last tested on Herdr 0.1.13 (`herdr-app` 0.1.13, `herdr` 0.9.5).
 
 ## Commands and props
@@ -118,6 +123,7 @@ default):
 | `reviewer.ask` | Ask the agent about the whole open diff |
 | `reviewer.clear` | Discard the shown scope's drafts |
 | `reviewer.scope` | Cycle Uncommitted, Last commit and vs main |
+| `reviewer.full` | Show or fold the unchanged lines (*Full file*) |
 
 Block props: `palette` (`one-dark-pro`, `dark-plus` or `theme`),
 `font_size` (overrides the diff's size), `base` (the branch *vs main*

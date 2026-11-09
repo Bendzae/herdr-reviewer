@@ -48,16 +48,17 @@ if [ ! -f "$file" ]; then
   exit 0
 fi
 # Herdr's main layout caps the side panel at 900px, too narrow for a review;
-# raise the max on every node holding the reviewer block to WIDE. Without the
-# cap the panel could cover the terminals, so each sibling of a raised node
-# that has no min of its own gets KEEP px. It never lowers a max or replaces
-# a min, and leaves the layout as it was without python3.
-WIDE=10000 KEEP=480
+# raise the max on every node holding the reviewer block to WIDE. It never
+# lowers a max, and leaves the layout as it was without python3. 0.5.1 also
+# gave the terminal area beside the panel "min": 480, but Herdr lets a panel
+# run out of the window rather than shrink it below a sibling's min, so that
+# min (exactly 480, on a sibling of those nodes) is taken out again.
+WIDE=10000 OLD_KEEP=480
 widen() {
   command -v python3 >/dev/null 2>&1 || { echo "python3 isn't on PATH, so the panel keeps its max width; raise \"max\" on the node holding reviewer in $1 by hand"; return 0; }
-  python3 - "$1" "$WIDE" "$KEEP" <<'PY'
-import json, sys
-path, wide, keep = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+  python3 - "$1" "$WIDE" "$OLD_KEEP" <<'PY'
+import json, os, sys
+path, wide, old_keep = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
 with open(path) as f: tree = json.load(f)
 def holders(node, trail):
     if (node.get("content") or {}).get("mod") == "reviewer": return trail
@@ -66,18 +67,18 @@ def holders(node, trail):
         if found is not None: return found
     return None
 trail = [tree] + (holders(tree, []) or [])
-raised, kept = [], []
+raised, freed = [], []
 for parent, n in zip(trail, trail[1:]):
     if isinstance(n.get("max"), (int, float)) and n["max"] < wide:
         raised.append("%s %s" % (n.get("id"), n["max"])); n["max"] = wide
-        for sib in parent.get("children") or []:
-            if sib is not n and "min" not in sib and "px" not in (sib.get("size") or {}):
-                sib["min"] = keep; kept.append(str(sib.get("id")))
-was = ", ".join(raised) + ("; %s keeps at least %dpx" % (", ".join(kept), keep) if kept else "")
-if raised:
+    for sib in parent.get("children") or []:
+        if sib is not n and sib not in trail and sib.get("min") == old_keep:
+            del sib["min"]; freed.append(str(sib.get("id")))
+if raised or freed:
     with open(path + ".reviewer-tmp", "w") as f: json.dump(tree, f, indent=2); f.write("\n")
-    import os; os.replace(path + ".reviewer-tmp", path)
-    print("layout: the panel holding reviewer can now be dragged wider (max %dpx; was %s)" % (wide, was))
+    os.replace(path + ".reviewer-tmp", path)
+if raised: print("layout: the panel holding reviewer can now be dragged wider (max %dpx; was %s)" % (wide, ", ".join(raised)))
+if freed: print("layout: took out the %dpx min an earlier install gave %s, which pushed a wide panel out of the window" % (old_keep, ", ".join(freed)))
 PY
 }
 if uses "$file" reviewer; then

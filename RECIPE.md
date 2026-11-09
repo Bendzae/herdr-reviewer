@@ -152,6 +152,24 @@ fill, `foreground` text at 13px. Top to bottom:
 - The first changed file's diff opens by itself; clicking a file opens it,
   clicking it again closes it. Untracked files show as one `+` hunk of the
   whole file.
+- **Unchanged lines.** Around and between git's hunks the file's other
+  lines are filled in from its new side (the working tree, or `git show
+  <commit>:<path>` for a picked commit) as plain context rows that belong
+  to no hunk. The diff's context and `+` lines must match the file at
+  their numbers, else (the file changed since the diff was read) nothing
+  is filled; also not for a deleted file, a diff cut at 1,500 lines, or a
+  file over 30,000 lines or 2 MB. Each run of them is folded into one row
+  (`raised` at half alpha, `dim` text, "⋯" in the gutter, "N unchanged
+  lines · click to show"; a run of 1–2 lines is just shown). A click opens
+  that fold until another file is picked. A **Full file** toggle in the
+  header, left of the counts, opens them all: a 24px square icon button
+  (1px `border`, 6px corners, 13px Lucide icon in `dim`; only when the file
+  has folds) showing what a click does, `unfold-vertical` (tooltip "Show
+  the whole file") while folded and `fold-vertical` ("Fold the unchanged
+  lines") on, with an `accent` border, icon and tint while on; it is remembered in shared
+  `reviewer.full`. Folds holding a commented line or the comment box's
+  lines stay open. "Ask about diff" sends the hunks only. Highlighting
+  keeps one tokenizer state for the new side and another for removed lines.
 - **Click a diff row** to open the comment box on that line. With the box
   open and empty, **click a row outside the highlight** to widen the
   comment to the range between them, or **click any highlighted row** to
@@ -230,7 +248,7 @@ fill, `foreground` text at 13px. Top to bottom:
   it short at this size. Consider sending fewer comments at a time."
 - Key commands: `reviewer.submit`, `reviewer.ask`,
   `reviewer.clear` (discard drafts), `reviewer.scope` (next
-  scope). They reach shown copies only.
+  scope), `reviewer.full` (Full file on or off). They reach shown copies only.
 - Another mod opens a file's diff by setting shared `reviewer.open` to
   `{ id, at: Date.now(), path, on, ref? }` (an absolute path on machine `on`,
   null for local; the repo folder itself selects no file). With `ref`
@@ -253,9 +271,10 @@ fill, `foreground` text at 13px. Top to bottom:
   not in the Changes panel's spot. Instead the mod takes the `changes`
   block's place in a personal layout (the repo's `scripts/install.sh` clones
   a shipped layout as `<name>-reviewer` and swaps the block's mod; it also
-  raises the 900px `max` of the nodes holding the block to 10000 and gives
-  their siblings without a `min` or fixed px size `"min": 480`, so the
-  panel can be dragged wide without covering the terminals).
+  raises the 900px `max` of the nodes holding the block to 10000. It gives
+  the terminal area no `min`: Herdr lets a px-sized panel run out of the
+  window rather than shrink it below a sibling's min, so 0.5.1's
+  `"min": 480` on those siblings is taken out again).
   `main.js` keeps the clone's structure: `location()` keyed on the focused
   pane's `cwd` and machine, `refresh` (git `rev-parse`, `status
   --porcelain=v1 -z`, `diff --numstat`), `load` (git `diff HEAD -- path`,
@@ -350,7 +369,8 @@ fill, `foreground` text at 13px. Top to bottom:
 - Remote spaces: every `exec`/`readTextFile` passes `{ on }`; the message
   says "(on machine)" after the path so the agent knows where the file is.
 - Limits from the clone: 1,000 files, 1,500 diff lines, 4,000 characters
-  per line; 400 rows per "Ask about diff".
+  per line; 400 rows per "Ask about diff". Unchanged lines are filled in
+  for files up to 30,000 lines and 2 MB.
 
 ## Done when
 

@@ -13,8 +13,13 @@
 // The comment box is a card floating over the top-right of the diff (a
 // strip under it when the panel is narrow), so the rows never move: a
 // list row may hold no input, so the box can't sit between the lines.
+// The unchanged lines between hunks (and before the first, after the
+// last) are read from the file and folded into a "N unchanged lines" row:
+// a click opens that fold, and "Full file" in the header opens them all
+// (remembered in shared "reviewer.full"), so the whole file scrolls.
 // Keys: "reviewer.submit", "reviewer.ask" (about the whole
-// diff), "reviewer.clear" (drops the draft comments); in the send
+// diff), "reviewer.clear" (drops the draft comments), "reviewer.full"
+// (folds or unfolds the unchanged lines); in the send
 // dialog (dialog.js) "reviewer.send" and "reviewer.close".
 // Another mod opens a file's diff by setting shared "reviewer.open" to
 // { id, at: Date.now(), path (absolute), on (machine or null), ref? }: the panel
@@ -52,7 +57,10 @@ const NONE = "#00000000", SENT = "reviewer.sent", DRAFTS = "reviewer.drafts", SC
 // "commit:<sha>" for a picked commit: the id keys the remembered scope and the drafts.
 const SCOPES = ["work", "last", "branch"];
 const LOG_SIZE = 100;
-const OPEN = "reviewer.open", OPEN_TTL = 30_000;
+const OPEN = "reviewer.open", OPEN_TTL = 30_000, FULL = "reviewer.full";
+// Diff lines shown at most; with the unchanged lines filled in, file lines at
+// most (a bigger file shows its hunks only). A fold this short is just shown.
+const DIFF_LINES = 1500, FILE_LINES = 30000, FILE_BYTES = 2_000_000, SHORT_GAP = 2;
 // Flags for the automatic git reads (the same ones Herdr's Changes panel
 // uses): never take index.lock, which an agent's commit may need at the same
 // moment; never start a repo's fsmonitor just because it got focus; never
@@ -71,22 +79,56 @@ const desc = (r) => ({ kind: r.kind, number: r.number ?? null, text: r.text });
 const descKey = (d) => `${d.kind}|${d.number}|${d.text}`;
 
 // Numbers each diff line once and tokenizes it, so a frame only draws the rows on screen.
+// A line starting with "=" is an unchanged line outside the hunks (filled
+// in by fillGaps): a context row with `gap` set to its run's number and no hunk.
+// The new side (context, added, unchanged) and the removed lines each keep
+// their own tokenizer state, so a comment opened in one isn't carried into the other.
 function diffRows(lines, lang) {
-  let old = 0, next = 0, state = null, hunk = -1;
+  let old = 1, next = 1, state = null, oldState = null, hunk = -1, gap = -1, inGap = false;
   return lines.map((line, i) => {
     const match = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(line);
-    if (match) { old = +match[1]; next = +match[2]; state = null; hunk = i; return { kind: "@", text: line, hunk: i, spans: [{ text: line, cls: "" }] }; }
+    if (match) { old = +match[1]; next = +match[2]; oldState = null; hunk = i; inGap = false; return { kind: "@", text: line, hunk: i, spans: [{ text: line, cls: "" }] }; }
     const kind = line[0];
     let row;
-    if (kind === "-") row = { kind, number: old++, text: line.slice(1) || " " };
+    if (kind === "=") { if (!inGap) { gap++; inGap = true; } old++; row = { kind: " ", number: next++, text: line.slice(1) || " ", gap }; }
+    else if (kind === "-") row = { kind, number: old++, text: line.slice(1) || " " };
     else if (kind === "+") row = { kind, number: next++, text: line.slice(1) || " " };
     else if (kind === " ") { old++; row = { kind, number: next++, text: line.slice(1) || " " }; }
     else row = { kind: "", text: line };
-    row.hunk = hunk;
-    const t = tokenize(row.text.replace(/\t/g, "    "), lang, state);
-    row.spans = t.spans; state = t.state;
+    if (kind !== "=") inGap = false;
+    row.hunk = kind === "=" ? -1 : hunk;
+    const removed = kind === "-", t = tokenize(row.text.replace(/\t/g, "    "), lang, removed ? oldState : state);
+    row.spans = t.spans;
+    if (removed) oldState = t.state; else if (row.kind) state = t.state;
     return row;
   });
+}
+
+// The diff's lines with the file's unchanged lines around and between the
+// hunks added as "=" lines. `text` is the new side of the file. Returns the
+// diff as it was when the file doesn't match it (changed since the diff
+// was read) or is too big.
+function fillGaps(lines, text) {
+  if (text.length > FILE_BYTES || text.includes("\0")) return lines;
+  const file = text === "" ? [] : text.replace(/\n$/, "").split("\n");
+  if (file.length > FILE_LINES) return lines;
+  const out = [];
+  let next = 1;
+  for (const line of lines) {
+    const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))?/.exec(line);
+    if (match) {
+      // An empty new side ("+12,0") starts after line 12, not at it.
+      const start = match[2] === "0" ? +match[1] + 1 : +match[1];
+      if (start < next) return lines;
+      for (; next < start; next++) out.push(`=${file[next - 1]}`);
+    } else if (line[0] === "+" || line[0] === " ") {
+      if (file[next - 1] !== line.slice(1)) return lines;
+      next++;
+    }
+    out.push(line);
+  }
+  for (; next <= file.length; next++) out.push(`=${file[next - 1]}`);
+  return out;
 }
 
 export default class Changes extends View {
@@ -95,7 +137,7 @@ export default class Changes extends View {
     if (props()?.dialog) { this.dialog = Object.create(Dialog.prototype); this.dialog.init(_props, cx); return; }
     this.files = []; this.rows = []; this.index = new Map(); this.items = []; this.sizes = []; this.diffWidth = 0; this.gutter = 30; this.message = "";
     this.comments = []; this.composer = null; this.handle = cx.focus_handle(); this.scroll = VirtualListScrollHandle.new();
-    this.fontSize = codeSize(); this.row = rowOf(this.fontSize);
+    this.fontSize = codeSize(); this.row = rowOf(this.fontSize); this.unfolded = new Set();
     this.scope = "work"; this.sha = null; this.scopeInfo = null; this.choosingScope = false; this.range = ["HEAD"]; this.log = null;
     this.input = InputState.new({ placeholder: "Commit message" });
     this.input.on("change", (_e, cx) => {
@@ -121,6 +163,7 @@ export default class Changes extends View {
         else if (c === "submit") this.submit(cx);
         else if (c === "clear") this.setComments([], cx);
         else if (c === "scope") this.cycleScope(cx);
+        else if (c === "full") this.toggleFull(cx);
         cx.notify();
       }
     });
@@ -357,19 +400,33 @@ export default class Changes extends View {
         lines = [`@@ -0,0 +1,${file.add} @@`, ...text.slice(0, 400000).replace(/\n$/, "").split("\n").slice(0, 1500).map(l => `+${l}`)];
       }
     } else {
-      const r = await exec("git", [...READ, "diff", ...(this.hasHead ? this.range : []), "--no-ext-diff", "--no-textconv", "--no-color", "--", path], { cwd: root, on });
+      const range = this.hasHead ? this.range : [];
+      const r = await exec("git", [...READ, "diff", ...range, "--no-ext-diff", "--no-textconv", "--no-color", "--", path], { cwd: root, on });
       if (r.code !== 0) throw new Error(r.stderr);
       const all = r.stdout.replace(/\n$/, "").split("\n"), first = all.findIndex((l) => l.startsWith("@@"));
       lines = first < 0 ? [file.binary ? "Binary file changed" : "No text diff available"] : all.slice(first);
+      // The unchanged lines around the hunks, from the new side of the file:
+      // the picked commit's blob, else the working tree. A cut diff or a deleted file has none.
+      if (first >= 0 && lines.length <= DIFF_LINES && file.status !== "D") {
+        const commit = this.scope === "commit" && range.length === 2 ? range[1] : null;
+        const text = commit ? await exec("git", [...READ, "show", `${commit}:${path}`], { cwd: root, on }).then((s) => s.code === 0 ? s.stdout : null).catch(() => null)
+          : await readTextFile(`${root}/${path}`, { on }).catch(() => null);
+        if (typeof text === "string") lines = fillGaps(lines, text);
+      }
     }
-    if (key() === context && this.open === path) this.setLines(lines.slice(0, 1500).map(line => line.length > 4000 ? line.slice(0, 4000) + "… (line truncated)" : line), path);
+    if (lines.length > (lines.some((l) => l[0] === "=") ? FILE_LINES + DIFF_LINES : DIFF_LINES)) lines = lines.slice(0, DIFF_LINES);
+    if (key() === context && this.open === path) this.setLines(lines.map(line => line.length > 4000 ? line.slice(0, 4000) + "… (line truncated)" : line), path);
   }
 
   setLines(lines, path) {
     const same = this.lines && lines.length === this.lines.length && lines.every((l, i) => l === this.lines[i]);
     if (same) return;
-    this.lines = lines;
+    if (path !== this.linesPath) this.unfolded = new Set();
+    this.lines = lines; this.linesPath = path;
     this.rows = diffRows(lines, languageOf(path));
+    // Each fold's rows, by gap number.
+    this.gaps = [];
+    this.rows.forEach((r, i) => { if (r.gap !== undefined) (this.gaps[r.gap] ??= []).push(i); });
     this.index = new Map();
     this.rows.forEach((r, i) => { const k = descKey(desc(r)); if (!this.index.has(k)) this.index.set(k, i); });
     this.measure();
@@ -387,11 +444,31 @@ export default class Changes extends View {
   // Where a row descriptor is in the current diff, or -1.
   at(d) { return d ? (this.index.get(descKey(d)) ?? -1) : -1; }
 
+  // Whether a fold shows its lines: "Full file", opened by a click, too short
+  // to fold, or holding lines that a comment or the comment box is on.
+  shown(g, keep) {
+    return this.full() || this.unfolded.has(g) || (this.gaps[g]?.length ?? 0) <= SHORT_GAP || keep.has(g);
+  }
+  full() { return shared(FULL) === true; }
+  toggleFull(cx) { setShared(FULL, !this.full()); this.unfolded = new Set(); this.rebuild(); cx.notify(); }
+  unfold(g, cx) { this.unfolded.add(g); this.rebuild(); cx.notify(); }
+
   // The list's items: diff rows, with each comment under its last line;
   // comments on the whole file come first. The comment being edited stays
-  // in place as a live preview of what is typed in the box.
+  // in place as a live preview of what is typed in the box. A closed fold
+  // is one "N unchanged lines" item in place of its rows.
   rebuild() {
-    const items = this.rows.map((_r, i) => ({ key: `r:${i}`, kind: "row", i, height: this.row }));
+    // Folds a comment or the comment box reaches into stay open.
+    const keep = new Set(), reach = (from, to) => { for (let j = Math.max(0, from); j <= to; j++) { const g = this.rows[j]?.gap; if (g !== undefined) keep.add(g); } };
+    for (const c of this.comments) if (c.path === this.open && !c.whole) reach(this.at(c.from), this.at(c.to));
+    const target = this.target();
+    if (target) reach(target.from, target.to);
+    const items = [];
+    this.builtFull = this.full();
+    this.rows.forEach((r, i) => {
+      if (r.gap === undefined || this.shown(r.gap, keep)) items.push({ key: `r:${i}`, kind: "row", i, height: this.row });
+      else if (this.gaps[r.gap][0] === i) items.push({ key: `f:${r.gap}`, kind: "fold", gap: r.gap, count: this.gaps[r.gap].length, height: this.row });
+    });
     const under = new Map(), editing = this.composer?.editing ?? null;
     this.items = [];
     for (const c of this.comments) {
@@ -403,7 +480,7 @@ export default class Changes extends View {
       if (from < 0 || to < 0 || to < from) continue;
       (under.get(to) ?? under.set(to, []).get(to)).push({ ...it, from, to });
     }
-    for (const item of items) { this.items.push(item); for (const c of under.get(item.i) ?? []) this.items.push(c); }
+    for (const item of items) { this.items.push(item); if (item.kind === "row") for (const c of under.get(item.i) ?? []) this.items.push(c); }
     this.sizes = this.items.map((it) => it.height);
   }
 
@@ -522,7 +599,8 @@ export default class Changes extends View {
 
   askAbout(indexes, cx) {
     if (!this.open || !this.rows.length) return;
-    const rows = (indexes ? indexes.sort((a, b) => a - b).map((i) => this.rows[i]) : this.rows).filter(Boolean).slice(0, 400);
+    // The whole diff: its hunks, not the unchanged lines filled in around them.
+    const rows = (indexes ? indexes.sort((a, b) => a - b).map((i) => this.rows[i]) : this.rows.filter((r) => r.gap === undefined)).filter(Boolean).slice(0, 400);
     const span = this.span(rows), title = `${this.open}${span ? `:${span.replace(/^(removed )?lines? /, "")}` : ""}`;
     const head = indexes ? `In ${this.where(this.open)}, ${span || "these lines"} of the diff (${this.scopeWords()}; new-file line numbers; - lines are removed):` : `The diff of ${this.where(this.open)} (${this.scopeWords()}):`;
     cx.spawn(async (cx) => { try { await ask({ title, context: `${head}\n${this.quote(rows)}` }); } catch (e) { this.note_ = `Ask failed: ${e}`; } cx.notify(); });
@@ -647,6 +725,11 @@ export default class Changes extends View {
           .child(div().text_size(10).text_color(it.live ? t.accent : t.dim).child(it.live ? `Comment · ${span} · editing` : `Comment · ${span} · click to edit`))
           .child(div().text_size(this.fontSize).whitespace_normal().text_color(it.text ? t.foreground : t.dim).child(it.text || "(empty)")));
     }
+    if (it.kind === "fold") {
+      return h_flex().w_full().h(this.row).flex_none().items_center().cursor_pointer().bg(t.raised + "80").text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground))
+        .child(div().w(this.gutter + 16).flex_none().text_center().child("⋯"))
+        .child(div().flex_1().min_w(0).truncate().text_size(this.fontSize - 1).child(`${it.count} unchanged line${it.count > 1 ? "s" : ""} · click to show`));
+    }
     const { kind, number, spans } = this.rows[it.i], i = it.i;
     const on = target && i >= target.from && i <= target.to, mark = commented.has(i);
     if (kind === "@") {
@@ -671,6 +754,8 @@ export default class Changes extends View {
     else if (key() !== this.context || (request?.id !== this.tried && this.requestedFile(request) !== null)) this.refresh(cx);
     const size = codeSize();
     if (size !== this.fontSize) { this.fontSize = size; this.row = rowOf(size); this.measure(); }
+    // "Full file" may have been switched in another copy of the panel.
+    else if (this.full() !== this.builtFull) this.rebuild();
     // The dialog reports a sent review through a shared key; the draft goes.
     const sentAt = shared(SENT);
     if (this.submitting && typeof sentAt === "number" && sentAt >= this.submitting) { this.submitting = null; cx.timer.after(1, (cx) => this.setComments([], cx)); }
@@ -694,7 +779,12 @@ export default class Changes extends View {
         .child(div().font_semibold().child("Changes"))
         .child(div().h(24).px(8).flex().items_center().rounded(6).border_1().border_color(t.border).text_size(12).text_color(t.muted).child(`${this.files.length} files`))
         .when(Boolean(this.root) && this.hasHead, (e) => e.child(this.scopePicker(t)))
-        .child(div().flex_1()).child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`−${del}`))
+        .child(div().flex_1())
+        // Full file: the icon shows what a click does (unfold when folded, fold when the whole file shows).
+        .when(this.gaps?.length > 0, (e) => e.child(div().id("full-file").size(24).flex().items_center().justify_center().rounded(6).border_1().border_color(this.full() ? t.accent : t.border).bg(this.full() ? t.accent + "22" : NONE).text_color(this.full() ? t.accent : t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .tooltip(this.full() ? "Fold the unchanged lines" : "Show the whole file").on_click((_e, cx) => this.toggleFull(cx))
+          .child(svg(this.full() ? "mods/reviewer/fold-vertical.svg" : "mods/reviewer/unfold-vertical.svg").size(13))))
+        .child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`−${del}`))
         .when(n > 0, (e) => e.child(link("review-discard", "Discard", (_e, cx) => this.setComments([], cx))).child(button("review-submit", `Submit review · ${n}`, true, (_e, cx) => this.submit(cx))))
         .when(n === 0 && canAsk, (e) => e.child(button("ask", "Ask about diff", false, (_e, cx) => this.askAbout(null, cx)))))
       .child(v_flex().id("changes-list").flex_none().h(Math.min(200, Math.max(44, this.files.length * 28 + 12))).overflow_y_scrollbar().p(6).border_b(1).border_color(t.border).children(this.files.map((f) => {
@@ -718,7 +808,7 @@ export default class Changes extends View {
         .child(div().id("changes-diff-x").size_full().overflow_x_scrollbar()
           .child(div().w_full().min_w(this.diffWidth).h_full().child(v_virtual_list("changes-diff", this.items.length, this.sizes.length ? this.sizes : this.row, (i) => this.items[i].key,
             (range) => this.items.slice(range.start, range.end).map((it) => this.item(it, t, colors, target, commented))).size_full().track_scroll(this.scroll)
-            .on_item_click((k, cx) => { if (k.startsWith("c:")) { if (k.slice(2) !== this.composer?.editing) this.editComment(k.slice(2), cx); } else this.clickRow(Number(k.slice(2)), cx); })
+            .on_item_click((k, cx) => { if (k.startsWith("f:")) this.unfold(Number(k.slice(2)), cx); else if (k.startsWith("c:")) { if (k.slice(2) !== this.composer?.editing) this.editComment(k.slice(2), cx); } else this.clickRow(Number(k.slice(2)), cx); })
             .on_item_secondary_click((k, _e, cx) => { if (!k.startsWith("r:")) return; const i = Number(k.slice(2)); const r = this.rows[i]; if (!r || r.kind === "") return; this.askAbout(r.kind === "@" ? this.rows.map((_r, j) => j).filter((j) => this.rows[j].hunk === i && this.rows[j].kind !== "") : [i], cx); }))))
         .child(Scrollbar.vertical("changes-diff").viewport_from_layout().absolute().inset_0())
         .when(!this.open && this.files.length > 0, (e) => e.child(div().absolute().top(6).px(12).text_color(t.dim).child("Select a file to view its changes")))
