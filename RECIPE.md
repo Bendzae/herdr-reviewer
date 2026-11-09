@@ -252,7 +252,10 @@ fill, `foreground` text at 13px. Top to bottom:
   layout, and in a personal one `"right"` docks it at the window's edge,
   not in the Changes panel's spot. Instead the mod takes the `changes`
   block's place in a personal layout (the repo's `scripts/install.sh` clones
-  a shipped layout as `<name>-reviewer` and swaps the block's mod).
+  a shipped layout as `<name>-reviewer` and swaps the block's mod; it also
+  raises the 900px `max` of the nodes holding the block to 10000 and gives
+  their siblings without a `min` or fixed px size `"min": 480`, so the
+  panel can be dragged wide without covering the terminals).
   `main.js` keeps the clone's structure: `location()` keyed on the focused
   pane's `cwd` and machine, `refresh` (git `rev-parse`, `status
   --porcelain=v1 -z`, `diff --numstat`), `load` (git `diff HEAD -- path`,

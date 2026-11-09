@@ -72,14 +72,20 @@ Everything the shipped panel did (file list, diff, commit box) stays.
    are read-only, so if you are on one (such as the default `main`) the
    script clones it as `<name>-reviewer` and switches to it; the clone
    keeps your sizes and look. A layout you cloned yourself is edited in
-   place. Pass `--no-layout` to skip this step.
+   place. It also lifts the panel's 900px width cap so you can drag it
+   wider, and keeps the terminal area at least 480px wide instead (this
+   step needs `python3`; without it the cap stays). Pass `--no-layout` to
+   skip this step.
 3. Run the script again after each update or checkout; Herdr reloads the
-   panel in place. It leaves a layout that already shows `reviewer` alone.
+   panel in place. In a layout that already shows `reviewer` it only lifts
+   the width cap, if that hasn't been done.
 
 Without the script, or with Herdr closed, do step 2 by hand: in your own
 layout (`herdr-app do layout.clone '{"name":"main","as":"main-reviewer"}'`
 if you are on a shipped one), replace the `changes` block's mod with
-`reviewer`, or add a new block for it. Herdr never overwrites it, since it
+`reviewer`, or add a new block for it. For a wider panel, raise `"max"`
+on the node that holds it (`panel` in `main`) and give its sibling
+(`main`) a `"min"` so the terminals keep some room. Herdr never overwrites it, since it
 is a clone of the shipped `changes` mod rather than the shipped mod itself.
 
 Or ask the agent in your Herdr window to add
@@ -98,7 +104,7 @@ mod opened as an overlay of itself.
 
 The mod's version is the `version` field in `mods/reviewer/mod.json`, and
 each release is tagged `v<version>` in this repo. Installed copies carry no
-git history, so quote that field when reporting a problem. Version 0.5.0 was
+git history, so quote that field when reporting a problem. Version 0.5.1 was
 last tested on Herdr 0.1.13 (`herdr-app` 0.1.13, `herdr` 0.9.5).
 
 ## Commands and props
