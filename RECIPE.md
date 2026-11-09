@@ -19,16 +19,26 @@ fill, `foreground` text at 13px. Top to bottom:
   in semibold, then every control in the row 24px tall with 12px text and
   6px corners: an "N files" chip (1px `border`, `muted` text, 8px side
   padding), then the **scope picker**: a select-looking box (`raised`,
-  1px `border`, `accent` while open) reading "Uncommitted", "Last commit"
-  or "vs main" with an 11px chevron; it is a `Popover` whose list
-  (260–380px wide, long details cut with an ellipsis, `popover` fill,
+  1px `border`, `accent` while open) reading "Uncommitted", "Last commit",
+  "vs main" or "Commit <short hash>" with an 11px chevron; it is a `Popover` whose list
+  (300–420px wide, long details cut with an ellipsis, `popover` fill,
   6px padding, 8px corners, shadow) has three rows 2px
   apart, each 10px side and 7px top/bottom padding holding a 12px label
   over an 11px `dim` detail — "working tree vs HEAD";
   "e29daef · <subject>, plus uncommitted"; "everything on <branch> since
   it left main" — with a 12px `accent` check on the current one; rows the
   repo can't offer ("HEAD has no parent", "on main itself", "no main or
-  master branch") are at half opacity and inert. Hidden for a repo
+  master branch") are at half opacity and inert. Under them, past a 1px
+  `border` line, an 11px `dim` caption "One commit on <branch>, on its
+  own" over the branch's own commits (`git log --first-parent -n100
+  <merge base>..HEAD`) when it has left its base, else "One commit, on its
+  own" over the last 100 (`git log --first-parent -n100`); first-parent, so
+  commits merged in show as their merge. Read each time the list opens,
+  "Loading commits…" until then, in a list at most 280px tall that
+  scrolls: each row 5px top/bottom padding, an 11px `dim` short hash in
+  the code font, the subject (12px, cut with an ellipsis), the 10px
+  `muted` relative date and the check; its tooltip holds the hash, author,
+  date and subject. Hidden for a repo
   without a commit. Then on the right `+added` in `ansi2` and `−deleted`
   in `ansi1` at 11px. With draft comments: a `dim` "Discard" link and a **Submit review
   · N** button (24px tall, 10px side padding, 6px corners, 12px medium,
@@ -114,12 +124,15 @@ fill, `foreground` text at 13px. Top to bottom:
   refs: `HEAD` (Uncommitted), `HEAD~1` (Last commit: that commit plus
   whatever is uncommitted), or the merge base of the branch with its base
   branch (vs main: everything since the branch left it, committed or not,
-  the pull-request view). The base branch is `props.base`, else
+  the pull-request view); or a commit picked from the list, on its own:
+  `git diff <commit>~1 <commit>` (the empty tree for a root commit), with
+  no untracked files or conflicts, since the working tree isn't part of it. The base branch is `props.base`, else
   `origin/HEAD`'s branch, else `main`, else `master`; the merge base is
   taken against the local branch when there is one, else `origin/<base>`.
   A repo opens in "vs main" when the branch has left the base, else
   "Uncommitted"; the choice is remembered per repo and machine in shared
-  `reviewer.scope`. The file list is `git diff <ref> --name-status`
+  `reviewer.scope` (a picked commit as `commit:<full hash>`; one that no
+  longer exists falls back to Uncommitted). The file list is `git diff <ref> --name-status`
   plus untracked files and conflicts from `git status`, sorted by path;
   counts come from `git diff <ref> --numstat`; a file's diff is `git diff
   <ref> -- path`. These automatic reads run with the flags Herdr's own
@@ -133,8 +146,9 @@ fill, `foreground` text at 13px. Top to bottom:
   **Each scope has its own draft comments**: switching swaps the set shown
   (the badge, the inline cards and the file bubbles follow), the other
   scopes' drafts stay saved, and Submit and Discard act on the shown
-  scope's set only. `reviewer.scope` cycles the scopes the repo
-  offers.
+  scope's set only; every picked commit is a scope of its own.
+  `reviewer.scope` cycles Uncommitted, Last commit and vs main (those the
+  repo offers); from a picked commit it goes to Uncommitted.
 - The first changed file's diff opens by itself; clicking a file opens it,
   clicking it again closes it. Untracked files show as one `+` hunk of the
   whole file.
@@ -162,7 +176,8 @@ fill, `foreground` text at 13px. Top to bottom:
   lines, Save replaces it, Delete removes it.
 - Drafts survive a reload of the mod and a restart: they are kept in
   shared state `reviewer.drafts` per repo, machine and scope (key
-  `<machine>:<root>:<scope>`; drafts saved under the older `<machine>:<root>`
+  `<machine>:<root>:<scope>`, the scope being `work`, `last`, `branch` or
+  `commit:<full hash>`; drafts saved under the older `<machine>:<root>`
   key are moved to the Uncommitted scope on first load), anchored to their
   lines by kind, number and text. A comment whose lines left the
   diff (edited again on disk) stays in the draft and is sent with the two
@@ -172,7 +187,8 @@ fill, `foreground` text at 13px. Top to bottom:
   machine when remote) and the scope in words ("uncommitted changes" /
   "the last commit (e29daef, "<subject>") plus the uncommitted changes" /
   "all changes on branch <b> since it left main (merge base abc1234),
-  committed or not"), then per comment, sorted by file and line, a
+  committed or not" / "commit abc1234 ("<subject>") on its own, against
+  its parent"), then per comment, sorted by file and line, a
   `### path, lines a-b` heading, the lines as `<number> <+|-|space> <text>`,
   and `Comment: <text>`; a whole-file comment comes first for its file
   under `### path, whole file (added, binary)` (status and counts, no
@@ -216,8 +232,12 @@ fill, `foreground` text at 13px. Top to bottom:
   `reviewer.clear` (discard drafts), `reviewer.scope` (next
   scope). They reach shown copies only.
 - Another mod opens a file's diff by setting shared `reviewer.open` to
-  `{ id, at: Date.now(), path, on }` (an absolute path on machine `on`,
-  null for local). `render` starts a refresh when the request is for the
+  `{ id, at: Date.now(), path, on, ref? }` (an absolute path on machine `on`,
+  null for local; the repo folder itself selects no file). With `ref`
+  (resolved with `git rev-parse --verify <ref>^{commit}`, one starting with
+  `-` refused) the refresh first switches to that commit's scope and
+  remembers it, as a pick from the list would; an unknown one keeps the
+  scope and shows "Requested commit <ref> isn't in this repo.". `render` starts a refresh when the request is for the
   shown repo and machine and its id was not tried yet; the refresh selects
   the file (or shows "Requested file has no diff in this scope" and keeps
   the scope and drafts) and clears the key when it still holds that id. A
@@ -333,7 +353,9 @@ fill, `foreground` text at 13px. Top to bottom:
 
 - On a feature branch the header reads "vs main" and the list holds every
   file the branch changed; on `main` with a clean tree, "Last commit"
-  shows that commit's files and "Uncommitted" shows none.
+  shows that commit's files and "Uncommitted" shows none. Picking an
+  older commit from the scope list shows only that commit's files, reads
+  "Commit <hash>" in the header, and survives a reload.
 - A space whose folder has uncommitted changes to a `.js`, `.rs` or `.py`
   file shows that file's diff with keywords, strings, comments and numbers
   in four different colors on green and red rows, line numbers on the left,

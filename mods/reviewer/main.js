@@ -17,13 +17,16 @@
 // diff), "reviewer.clear" (drops the draft comments); in the send
 // dialog (dialog.js) "reviewer.send" and "reviewer.close".
 // Another mod opens a file's diff by setting shared "reviewer.open" to
-// { id, at: Date.now(), path (absolute), on (machine or null) }: the panel
+// { id, at: Date.now(), path (absolute), on (machine or null), ref? }: the panel
 // picks it up on its next refresh, selects the file (or notes that it has no
-// diff in the shown scope) and clears the key. A request older than OPEN_TTL
+// diff in the shown scope) and clears the key. `path` may be the repo folder
+// itself, to select no file; `ref` (a commit-ish) switches to reviewing that
+// commit on its own first. A request older than OPEN_TTL
 // is dropped unread, so a stale one never fires when the repo gets focus later.
 // The header's scope picker chooses what is reviewed: the uncommitted
-// changes, the last commit plus them, or everything on the branch since it
-// left its base (the pull-request view); "reviewer.scope" cycles it.
+// changes, the last commit plus them, everything on the branch since it
+// left its base (the pull-request view), or any one commit from the log on
+// its own; "reviewer.scope" cycles the first three.
 // Props: { palette: "one-dark-pro" | "theme" | "dark-plus" (default: one-dark-pro),
 //          font_size: px (default: the terminal's font size minus one),
 //          base: the branch reviews are against (default: origin/HEAD, else main, else master) }.
@@ -44,8 +47,11 @@ function location() {
 const key = () => JSON.stringify(location());
 const countLines = (text) => text ? text.split("\n").length - Number(text.endsWith("\n")) : 0;
 const NONE = "#00000000", SENT = "reviewer.sent", DRAFTS = "reviewer.drafts", SCOPE = "reviewer.scope";
-// The review scopes, in picker order. `ref` is what the working tree is diffed against.
+// The review scopes, in picker order; "commit" (one picked commit vs its
+// parent) is chosen from the log, not cycled. A scope's id is its name, or
+// "commit:<sha>" for a picked commit: the id keys the remembered scope and the drafts.
 const SCOPES = ["work", "last", "branch"];
+const LOG_SIZE = 100;
 const OPEN = "reviewer.open", OPEN_TTL = 30_000;
 // Flags for the automatic git reads (the same ones Herdr's Changes panel
 // uses): never take index.lock, which an agent's commit may need at the same
@@ -90,7 +96,7 @@ export default class Changes extends View {
     this.files = []; this.rows = []; this.index = new Map(); this.items = []; this.sizes = []; this.diffWidth = 0; this.gutter = 30; this.message = "";
     this.comments = []; this.composer = null; this.handle = cx.focus_handle(); this.scroll = VirtualListScrollHandle.new();
     this.fontSize = codeSize(); this.row = rowOf(this.fontSize);
-    this.scope = "work"; this.scopeInfo = null; this.choosingScope = false; this.ref = "HEAD";
+    this.scope = "work"; this.sha = null; this.scopeInfo = null; this.choosingScope = false; this.range = ["HEAD"]; this.log = null;
     this.input = InputState.new({ placeholder: "Commit message" });
     this.input.on("change", (_e, cx) => {
       const hadMessage = Boolean(this.message.trim());
@@ -140,7 +146,7 @@ export default class Changes extends View {
     // for the same id, so a repo whose git keeps failing is read once, not in a loop.
     this.tried = request?.id ?? this.tried;
     if (context !== this.context) {
-      this.context = context; this.root = null; this.files = []; this.open = null; this.comments = []; this.composer = null;
+      this.context = context; this.root = null; this.log = null; this.files = []; this.open = null; this.comments = []; this.composer = null;
       this.setLines([]); this.message = ""; this.input.set_value(""); this.error = null; this.note_ = null; this.watched = null; this.closed = false; this.limited = false;
     }
     if (!cwd) return;
@@ -155,16 +161,28 @@ export default class Changes extends View {
         if (status.code !== 0) throw new Error(status.stderr);
         const head = await git(["rev-parse", "--verify", "HEAD"]);
         const hasHead = head.code === 0;
-        // The scopes this repo offers, and the one in use (remembered per repo).
-        const info = hasHead ? await this.scopes(git) : { branch: null, base: null, last: null, merge: null };
-        const scopeKey = `${on ?? ""}:${root}`, remembered = (shared(SCOPE) ?? {})[scopeKey];
-        let scope = root === this.root ? this.scope : (remembered ?? (info.merge ? "branch" : "work"));
+        // The scope in use (remembered per repo), and what this repo offers.
+        // A request for a commit (`ref`) picks that commit's scope, as a click in the list would.
+        const scopeKey = `${on ?? ""}:${root}`, requested = this.requestedFile(request, root, on);
+        let wanted = null, refNote = null;
+        if (requested !== null && typeof request.ref === "string" && request.ref) {
+          const r = hasHead && !request.ref.startsWith("-") ? await git(["rev-parse", "--verify", "-q", `${request.ref}^{commit}`]) : null;
+          if (r?.code === 0) { wanted = r.stdout.trim(); setShared(SCOPE, { ...(shared(SCOPE) ?? {}), [scopeKey]: `commit:${wanted}` }); }
+          else refNote = `Requested commit ${request.ref} isn't in this repo.`;
+        }
+        const remembered = (shared(SCOPE) ?? {})[scopeKey];
+        let [scope, sha] = wanted ? ["commit", wanted] : root === this.root ? [this.scope, this.sha] : remembered?.startsWith("commit:") ? ["commit", remembered.slice(7)] : [remembered ?? null, null];
+        const info = hasHead ? await this.scopes(git, scope === "commit" ? sha : null) : { branch: null, base: null, last: null, merge: null, commit: null };
+        if (!scope) scope = info.merge ? "branch" : "work";
         if (scope === "branch" && !info.merge) scope = "work";
         if (scope === "last" && !info.last) scope = "work";
-        const ref = scope === "branch" ? info.merge : scope === "last" ? `${info.last}~1` : "HEAD";
-        // Files: what differs from the scope's ref, plus untracked files and conflicts from the status.
+        if (scope === "commit" && !info.commit) { scope = "work"; sha = null; }
+        if (scope !== "commit") sha = null;
+        // What is diffed: the working tree against one ref, or a picked commit against its parent.
+        const range = scope === "commit" ? [info.commit.parent, info.commit.sha] : [scope === "branch" ? info.merge : scope === "last" ? `${info.last}~1` : "HEAD"];
+        // Files: what differs in the range, plus (for the working tree) untracked files and conflicts from the status.
         const stats = {}, changed = new Map();
-        const results = hasHead ? [await git(["diff", ref, "--numstat", "-z", "--no-renames"])] : [await git(["diff", "--cached", "--numstat", "-z", "--no-renames"]), await git(["diff", "--numstat", "-z", "--no-renames"])];
+        const results = hasHead ? [await git(["diff", ...range, "--numstat", "-z", "--no-renames"])] : [await git(["diff", "--cached", "--numstat", "-z", "--no-renames"]), await git(["diff", "--numstat", "-z", "--no-renames"])];
         for (const result of results) {
           if (result.code !== 0) throw new Error(result.stderr);
           for (const entry of result.stdout.split("\0")) {
@@ -175,7 +193,7 @@ export default class Changes extends View {
           }
         }
         if (hasHead) {
-          const names = await git(["diff", ref, "--name-status", "-z", "--no-renames"]);
+          const names = await git(["diff", ...range, "--name-status", "-z", "--no-renames"]);
           if (names.code !== 0) throw new Error(names.stderr);
           const parts = names.stdout.split("\0");
           // With diff.autoRefreshIndex off, a file whose stat changed but whose
@@ -183,7 +201,8 @@ export default class Changes extends View {
           // with no numstat line, until something else refreshes the index.
           for (let i = 0; i + 1 < parts.length && parts[i]; i += 2) { if (parts[i][0] !== "M" || stats[parts[i + 1]]) changed.set(parts[i + 1], parts[i][0]); }
         }
-        const entries = status.stdout.split("\0").filter(Boolean);
+        // A picked commit is history: the working tree's state is not part of it.
+        const entries = scope === "commit" ? [] : status.stdout.split("\0").filter(Boolean);
         for (const entry of entries) {
           const xy = entry.slice(0, 2), path = entry.slice(3);
           if (xy === "??") changed.set(path, "?");
@@ -197,19 +216,22 @@ export default class Changes extends View {
           files.push({ path, status: s, fresh, ...stat });
         }
         if (key() !== context) return;
-        if (root !== this.root || scope !== this.scope || ref !== this.ref) { this.setLines([]); }
-        const changedSet = root !== this.root || scope !== this.scope;
-        this.root = root; this.on = on; this.hasHead = hasHead; this.scope = scope; this.scopeInfo = info; this.ref = ref;
+        if (root !== this.root || scope !== this.scope || sha !== this.sha || range.join(" ") !== this.range.join(" ")) { this.setLines([]); }
+        const changedSet = root !== this.root || scope !== this.scope || sha !== this.sha;
+        this.root = root; this.on = on; this.hasHead = hasHead; this.scope = scope; this.sha = sha; this.scopeInfo = info; this.range = range;
         // Each scope keeps its own comments: switching swaps the set, the others stay saved.
-        if (changedSet) { this.comments = this.loadDrafts(scope); this.composer = null; }
+        if (changedSet) { this.comments = this.loadDrafts(this.scopeId()); this.composer = null; }
         this.files = files; this.limited = changed.size > 1000; this.error = null;
         this.watch(root, cx);
-        const requested = this.requestedFile(request);
         if (requested !== null) {
-          this.open = files.some(f => f.path === requested) ? requested : null;
-          this.closed = !this.open; this.composer = null; this.note_ = this.open ? null : "Requested file has no diff in this scope (or is outside the first 1,000 files).";
-          this.setLines([]);
-          if (this.open) this.scroll.scroll_to_item(0);
+          // "": the repo itself, no file to select.
+          if (requested !== "") {
+            this.open = files.some(f => f.path === requested) ? requested : null;
+            this.closed = !this.open; this.composer = null; this.note_ = this.open ? null : "Requested file has no diff in this scope (or is outside the first 1,000 files).";
+            this.setLines([]);
+            if (this.open) this.scroll.scroll_to_item(0);
+          } else this.note_ = null;
+          if (refNote) this.note_ = refNote;
           if (shared(OPEN)?.id === request.id) setShared(OPEN, null);
         }
         if (this.open && !files.some((f) => f.path === this.open)) { this.open = null; this.setLines([]); }
@@ -224,13 +246,15 @@ export default class Changes extends View {
     });
   }
 
-  // A request's path relative to the shown repo, or null when it is not for
-  // this repo and machine (or is stale). Windows paths compare case-insensitively.
-  requestedFile(request) {
-    if (!this.root || this.stale(request) || typeof request.path !== "string" || (request.on ?? null) !== (this.on ?? null)) return null;
-    const windows = !this.on && /^[A-Za-z]:[\\/]/.test(this.root);
-    const root = (windows ? this.root.replaceAll("\\", "/") : this.root).replace(/\/$/, ""), path = windows ? request.path.replaceAll("\\", "/") : request.path;
+  // A request's path relative to the repo `root` on machine `on` ("" for the
+  // repo folder itself), or null when it is not for that repo and machine (or
+  // is stale). Windows paths compare case-insensitively.
+  requestedFile(request, root0 = this.root, on = this.on) {
+    if (!root0 || this.stale(request) || typeof request.path !== "string" || (request.on ?? null) !== (on ?? null)) return null;
+    const windows = !on && /^[A-Za-z]:[\\/]/.test(root0);
+    const root = (windows ? root0.replaceAll("\\", "/") : root0).replace(/\/$/, ""), path = (windows ? request.path.replaceAll("\\", "/") : request.path).replace(/\/$/, "");
     const fold = (s) => windows ? s.toLowerCase() : s;
+    if (fold(path) === fold(root)) return "";
     return fold(path).startsWith(fold(root) + "/") ? path.slice(root.length + 1) : null;
   }
   // Malformed, or older than OPEN_TTL: dropped, whichever repo it was for.
@@ -238,20 +262,22 @@ export default class Changes extends View {
     return typeof request?.id !== "string" || !request.id || typeof request.at !== "number" || Date.now() - request.at > OPEN_TTL;
   }
 
-  // The draft comments of one scope of the shown repo. Drafts saved before
+  // The shown scope's id: its name, or "commit:<sha>" for a picked commit.
+  scopeId(scope = this.scope, sha = this.sha) { return scope === "commit" ? `commit:${sha}` : scope; }
+  // The draft comments of one scope (by id) of the shown repo. Drafts saved before
   // scopes existed (keyed by repo alone) were all on the uncommitted changes.
-  draftKey(scope = this.scope) { return `${this.on ?? ""}:${this.root}:${scope}`; }
-  loadDrafts(scope) {
+  draftKey(id = this.scopeId()) { return `${this.on ?? ""}:${this.root}:${id}`; }
+  loadDrafts(id) {
     const drafts = { ...(shared(DRAFTS) ?? {}) }, old = `${this.on ?? ""}:${this.root}`;
     if (drafts[old]) { drafts[`${old}:work`] = [...(drafts[`${old}:work`] ?? []), ...drafts[old]]; delete drafts[old]; setShared(DRAFTS, drafts); }
-    return drafts[this.draftKey(scope)] ?? [];
+    return drafts[this.draftKey(id)] ?? [];
   }
 
   // What this repo can be reviewed against: its branch, the base branch
   // (props.base, else origin/HEAD, else main, else master), the merge
-  // base with it (null when on the base itself), and HEAD's short hash
-  // when it has a parent.
-  async scopes(git) {
+  // base with it (null when on the base itself), HEAD's short hash
+  // when it has a parent, and the picked commit `sha` (null when it is gone).
+  async scopes(git, sha) {
     const out = async (args) => { const r = await git(args); return r.code === 0 ? r.stdout.trim() : null; };
     const branch = await out(["rev-parse", "--abbrev-ref", "HEAD"]);
     let base = typeof props()?.base === "string" ? props().base : null;
@@ -265,30 +291,57 @@ export default class Changes extends View {
     }
     const last = (await out(["rev-parse", "--verify", "-q", "HEAD~1"])) !== null ? await out(["rev-parse", "--short", "HEAD"]) : null;
     const subject = last ? await out(["log", "-1", "--format=%s"]) : null;
-    return { branch, base, merge, last, subject };
+    let commit = null;
+    if (sha) {
+      const found = await out(["log", "-1", "--format=%H%x1f%h%x1f%s", `${sha}^{commit}`, "--"]);
+      if (found) {
+        const [full, short, title] = found.split("\x1f");
+        // A root commit is diffed against the empty tree.
+        const parent = (await out(["rev-parse", "--verify", "-q", `${full}~1`])) ?? (await out(["hash-object", "-t", "tree", "/dev/null"]));
+        if (parent) commit = { sha: full, short, subject: title, parent };
+      }
+    }
+    return { branch, base, merge, last, subject, commit };
   }
 
   // The scope's name for the header and the submit message.
   scopeLabel(scope = this.scope) {
     const i = this.scopeInfo ?? {};
-    return scope === "branch" ? `vs ${i.base}` : scope === "last" ? "Last commit" : "Uncommitted";
+    return scope === "branch" ? `vs ${i.base}` : scope === "last" ? "Last commit" : scope === "commit" ? `Commit ${i.commit?.short ?? ""}` : "Uncommitted";
   }
   scopeWords() {
     const i = this.scopeInfo ?? {};
     return this.scope === "branch" ? `all changes on branch ${i.branch} since it left ${i.base} (merge base ${(i.merge ?? "").slice(0, 7)}), committed or not`
       : this.scope === "last" ? `the last commit (${i.last}${i.subject ? `, "${i.subject}"` : ""}) plus the uncommitted changes`
+      : this.scope === "commit" ? `commit ${i.commit?.short}${i.commit?.subject ? ` ("${i.commit.subject}")` : ""} on its own, against its parent`
       : "uncommitted changes";
   }
-  setScope(scope, cx) {
-    if (!this.root || scope === this.scope) { this.choosingScope = false; cx.notify(); return; }
-    const all = { ...(shared(SCOPE) ?? {}) }; all[`${this.on ?? ""}:${this.root}`] = scope; setShared(SCOPE, all);
-    this.scope = scope; this.choosingScope = false; this.composer = null; this.setLines([]);
-    this.comments = this.loadDrafts(scope); this.rebuild();
+  // `sha`: the commit, for the "commit" scope.
+  setScope(scope, cx, sha = null) {
+    const id = this.scopeId(scope, sha);
+    if (!this.root || id === this.scopeId()) { this.choosingScope = false; cx.notify(); return; }
+    const all = { ...(shared(SCOPE) ?? {}) }; all[`${this.on ?? ""}:${this.root}`] = id; setShared(SCOPE, all);
+    this.scope = scope; this.sha = sha; this.choosingScope = false; this.composer = null; this.setLines([]);
+    this.comments = this.loadDrafts(id); this.rebuild();
     this.refresh(cx); cx.notify();
   }
+  // From a picked commit, the next scope is Uncommitted.
   cycleScope(cx) {
     const ok = SCOPES.filter((s) => s === "work" || (s === "last" ? this.scopeInfo?.last : this.scopeInfo?.merge));
     this.setScope(ok[(ok.indexOf(this.scope) + 1) % ok.length], cx);
+  }
+  // The commits for the picker, read when it opens: on a branch that has left
+  // its base, the branch's own (first-parent, since the merge base); else the
+  // last LOG_SIZE on HEAD. First-parent: commits merged in show as their merge.
+  loadLog(cx) {
+    const root = this.root, on = this.on, context = this.context, merge = this.scopeInfo?.merge;
+    if (!root || !this.hasHead) return;
+    cx.spawn(async (cx) => {
+      const r = await exec("git", [...READ, "log", "--first-parent", `-n${LOG_SIZE}`, "--format=%H%x1f%h%x1f%s%x1f%ar%x1f%an", ...(merge ? [`${merge}..HEAD`] : []), "--"], { cwd: root, on });
+      if (key() !== context || root !== this.root) return;
+      this.log = r.code !== 0 ? [] : r.stdout.split("\n").filter(Boolean).map((l) => { const [sha, short, subject, when, author] = l.split("\x1f"); return { sha, short, subject, when, author }; });
+      cx.notify();
+    });
   }
 
   async load(path, context) {
@@ -304,7 +357,7 @@ export default class Changes extends View {
         lines = [`@@ -0,0 +1,${file.add} @@`, ...text.slice(0, 400000).replace(/\n$/, "").split("\n").slice(0, 1500).map(l => `+${l}`)];
       }
     } else {
-      const r = await exec("git", [...READ, "diff", ...(this.hasHead ? [this.ref ?? "HEAD"] : []), "--no-ext-diff", "--no-textconv", "--no-color", "--", path], { cwd: root, on });
+      const r = await exec("git", [...READ, "diff", ...(this.hasHead ? this.range : []), "--no-ext-diff", "--no-textconv", "--no-color", "--", path], { cwd: root, on });
       if (r.code !== 0) throw new Error(r.stderr);
       const all = r.stdout.replace(/\n$/, "").split("\n"), first = all.findIndex((l) => l.startsWith("@@"));
       lines = first < 0 ? [file.binary ? "Binary file changed" : "No text diff available"] : all.slice(first);
@@ -528,13 +581,27 @@ export default class Changes extends View {
       { scope: "branch", label: i.base ? `vs ${i.base}` : "vs base branch", detail: i.merge ? `everything on ${i.branch} since it left ${i.base}` : i.base ? `on ${i.base} itself` : "no main or master branch", ok: Boolean(i.merge) },
     ];
     const box = h_flex().id("scope-box").h(24).px(8).gap(6).items_center().rounded(6).border_1().border_color(this.choosingScope ? t.accent : t.border).bg(t.raised).cursor_pointer().hover((s) => s.bg(t.hover))
-      .tooltip("What is reviewed: the uncommitted changes, the last commit, or the whole branch").child(div().text_size(12).child(this.scopeLabel())).child(svg("mods/reviewer/chevron-down.svg").size(11).text_color(t.dim));
-    return Popover.new("scope").open(this.choosingScope).on_open_change((open, cx) => { this.choosingScope = open; cx.notify(); })
+      .tooltip("What is reviewed: the uncommitted changes, the last commit, the whole branch, or one commit").child(div().text_size(12).child(this.scopeLabel())).child(svg("mods/reviewer/chevron-down.svg").size(11).text_color(t.dim));
+    const check = (on) => on ? svg("mods/reviewer/check.svg").size(12).text_color(t.accent) : div().w(12);
+    // The recent commits, newest first: a click reviews that commit on its own.
+    const commits = (this.log ?? []).map((c) =>
+      h_flex().id(`scope-commit-${c.sha}`).px(10).py(5).gap(8).items_center().rounded(6).cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.setScope("commit", cx, c.sha)).tooltip(`${c.short} · ${c.author} · ${c.when}\n${c.subject}`)
+        .child(div().flex_none().text_size(11).font_family(codeFont()).text_color(t.dim).child(c.short))
+        .child(div().flex_1().min_w(0).text_size(12).truncate().child(c.subject))
+        .child(div().flex_none().text_size(10).text_color(t.muted).child(c.when))
+        .child(check(this.scope === "commit" && this.sha === c.sha)));
+    return Popover.new("scope").open(this.choosingScope).on_open_change((open, cx) => { this.choosingScope = open; if (open) this.loadLog(cx); cx.notify(); })
       .trigger(box)
-      .content(v_flex().mt(4).min_w(260).max_w(380).p(6).gap(2).rounded(8).border_1().border_color(t.border).bg(t.popover).shadow_md().children(options.map((o) =>
+      .content(v_flex().mt(4).min_w(300).max_w(420).p(6).gap(2).rounded(8).border_1().border_color(t.border).bg(t.popover).shadow_md().children(options.map((o) =>
         h_flex().id(`scope-${o.scope}`).px(10).py(7).gap(10).items_center().rounded(6).when(o.ok, (e) => e.cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.setScope(o.scope, cx))).when(!o.ok, (e) => e.opacity(0.5))
           .child(v_flex().flex_1().min_w(0).gap(2).child(div().text_size(12).child(o.label)).child(div().text_size(11).text_color(t.dim).truncate().child(o.detail)))
-          .child(o.scope === this.scope ? svg("mods/reviewer/check.svg").size(12).text_color(t.accent) : div().w(12)))));
+          .child(check(o.scope === this.scope))))
+        .child(div().mt(4).mx(4).border_t(1).border_color(t.border))
+        .child(div().px(10).pt(6).pb(2).text_size(11).text_color(t.dim).truncate().child(i.merge ? `One commit on ${i.branch}, on its own` : "One commit, on its own"))
+        .child(v_flex().id("scope-commits").max_h(280).overflow_y_scrollbar().gap(1)
+          .when(this.log === null, (e) => e.child(div().px(10).py(5).text_size(11).text_color(t.dim).child("Loading commits…")))
+          .when(this.log !== null && !commits.length, (e) => e.child(div().px(10).py(5).text_size(11).text_color(t.dim).child("No commits")))
+          .children(commits)));
   }
 
   // A panel under 600px has no room for a column beside the diff.
@@ -644,7 +711,7 @@ export default class Changes extends View {
             .on_click((_e, cx) => { cx.stop_propagation(); this.commentFile(f.path, cx); })
             .when(Boolean(k), (e) => e.child(String(k))).child(svg("mods/reviewer/comment.svg").size(k ? 10 : 12)))
           .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`))).when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
-      })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (this.loading ? "Loading changes…" : this.root ? "No uncommitted changes" : "No folder")))))
+      })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (this.loading ? "Loading changes…" : !this.root ? "No folder" : this.scope === "work" ? "No uncommitted changes" : "No changes in this scope")))))
       .when(this.limited, el => el.child(div().px(12).py(4).text_size(11).text_color(t.dim).child("Showing the first 1,000 changed files")))
       .child(h_flex().flex_1().min_h(0).items_stretch()
         .child(div().flex_1().min_w(0).min_h(0).relative().font_family(codeFont()).text_size(this.fontSize)

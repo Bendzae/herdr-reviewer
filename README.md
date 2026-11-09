@@ -13,9 +13,11 @@ message.
 - **Syntax-colored diffs** in One Dark Pro (or `dark-plus`, or your
   terminal theme's ansi colors), with line numbers, hunk headers and
   clearly tinted added and removed rows.
-- **Three review scopes**: *Uncommitted* (working tree vs `HEAD`),
-  *Last commit* (that commit plus whatever is uncommitted) and *vs main*
-  (everything since the branch left its base, committed or not). A branch
+- **Four review scopes**: *Uncommitted* (working tree vs `HEAD`),
+  *Last commit* (that commit plus whatever is uncommitted), *vs main*
+  (everything since the branch left its base, committed or not), or any
+  one commit on its own, picked from the same list: the branch's own
+  commits when it has left its base, else the last 100. A branch
   that has left its base opens in *vs main*; the choice is remembered per
   repo.
 
@@ -96,7 +98,7 @@ mod opened as an overlay of itself.
 
 The mod's version is the `version` field in `mods/reviewer/mod.json`, and
 each release is tagged `v<version>` in this repo. Installed copies carry no
-git history, so quote that field when reporting a problem. Version 0.4.0 was
+git history, so quote that field when reporting a problem. Version 0.5.0 was
 last tested on Herdr 0.1.13 (`herdr-app` 0.1.13, `herdr` 0.9.5).
 
 ## Commands and props
@@ -109,7 +111,7 @@ default):
 | `reviewer.submit` | Submit the shown scope's draft comments |
 | `reviewer.ask` | Ask the agent about the whole open diff |
 | `reviewer.clear` | Discard the shown scope's drafts |
-| `reviewer.scope` | Cycle to the next review scope |
+| `reviewer.scope` | Cycle Uncommitted, Last commit and vs main |
 
 Block props: `palette` (`one-dark-pro`, `dark-plus` or `theme`),
 `font_size` (overrides the diff's size), `base` (the branch *vs main*
@@ -125,8 +127,15 @@ setShared("reviewer.open", {
   at: Date.now(),
   path: "/absolute/path/to/repo/src/file.js",
   on: null, // Remote machine ID for remote files; null for local files.
+  ref: "abc1234", // Optional: review this commit on its own first.
 });
 ```
+
+`path` may also be the repository folder itself, to open Reviewer on the
+repo without selecting a file (useful with `ref`). `ref` is anything
+`git rev-parse` resolves to a commit (a hash, a tag, `HEAD~2`); it switches
+the scope to that commit, as picking it from the scope list would. A `ref`
+that isn't in the repo leaves the scope as it was and shows a message.
 
 Then reveal Reviewer's block using `layout.select` and `layout.show`.
 Reviewer selects the file and loads its diff after refreshing, including when
@@ -137,7 +146,8 @@ reviewer shows that repository, for up to 30 seconds; after that it is
 dropped, as is one without `at`.
 
 The focused pane must already be in the target repository and machine.
-The current review scope stays selected and draft comments are preserved.
+Without `ref`, the current review scope stays selected; draft comments are
+preserved either way.
 If the requested file has no diff in that scope, or falls outside the first
 1,000 files, Reviewer shows a message instead of an unrelated diff.
 
