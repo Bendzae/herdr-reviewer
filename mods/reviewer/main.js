@@ -21,6 +21,10 @@
 // diff), "reviewer.clear" (drops the draft comments), "reviewer.full"
 // (folds or unfolds the unchanged lines); in the send
 // dialog (dialog.js) "reviewer.send" and "reviewer.close".
+// With the keyboard on the panel (Herdr's pane.go moves onto it), vim-like
+// keys: a line cursor (j/k, ctrl-d/u, g/G), ]/[ hunks, n/p files, v marks a
+// range, Enter or c comments (or opens a fold, or edits a comment), C on the
+// whole file, a asks, s submits, f toggles Full file, h or Esc goes back.
 // Another mod opens a file's diff by setting shared "reviewer.open" to
 // { id, at: Date.now(), path (absolute), on (machine or null), ref? }: the panel
 // picks it up on its next refresh, selects the file (or notes that it has no
@@ -38,7 +42,7 @@
 //                `gh-merge-base` (default: origin/HEAD, else main, else master) }.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Scrollbar, v_virtual_list, VirtualListScrollHandle, Popover } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, nextCommand, props, shared, setShared } from "herdr";
+import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, nextCommand, props, shared, setShared, run } from "herdr";
 import { tokenize, languageOf } from "./highlight.js";
 import { ask } from "./ask.js";
 import { palette } from "./palette.js";
@@ -139,6 +143,9 @@ export default class Changes extends View {
     this.files = []; this.rows = []; this.index = new Map(); this.items = []; this.sizes = []; this.diffWidth = 0; this.gutter = 30; this.message = "";
     this.comments = []; this.composer = null; this.handle = cx.focus_handle(); this.scroll = VirtualListScrollHandle.new();
     this.fontSize = codeSize(); this.row = rowOf(this.fontSize); this.unfolded = new Set();
+    // The keyboard's line, as an item key so it stays put when the list is rebuilt;
+    // `anchor`: the row a range started on (v), or null.
+    this.cursorKey = null; this.anchor = null;
     this.scope = "work"; this.sha = null; this.scopeInfo = null; this.choosingScope = false; this.range = ["HEAD"]; this.log = null;
     this.input = InputState.new({ placeholder: "Commit message" });
     this.input.on("change", (_e, cx) => {
@@ -157,10 +164,16 @@ export default class Changes extends View {
     this.noteText = "";
     this.refresh(cx);
     cx.timer.every(10000, (cx) => this.refresh(cx));
+    // Herdr tells a mod nothing when the keyboard leaves it: the cursor and the border would stay lit.
+    cx.timer.every(150, (cx) => {
+      const f = this.handle.is_focused();
+      if (f !== this.focused) { this.focused = f; cx.notify(); }
+    });
     cx.spawn(async (cx) => {
       for (;;) {
         const c = await nextCommand();
-        if (c === "ask") this.askAbout(null, cx);
+        if (c === "focus") this.handle.focus();
+        else if (c === "ask") this.askAbout(null, cx);
         else if (c === "submit") this.submit(cx);
         else if (c === "clear") this.setComments([], cx);
         else if (c === "scope") this.cycleScope(cx);
@@ -425,7 +438,7 @@ export default class Changes extends View {
   setLines(lines, path) {
     const same = this.lines && lines.length === this.lines.length && lines.every((l, i) => l === this.lines[i]);
     if (same) return;
-    if (path !== this.linesPath) this.unfolded = new Set();
+    if (path !== this.linesPath) { this.unfolded = new Set(); this.cursorKey = null; this.anchor = null; }
     this.lines = lines; this.linesPath = path;
     this.rows = diffRows(lines, languageOf(path));
     // Each fold's rows, by gap number.
@@ -528,6 +541,7 @@ export default class Changes extends View {
   // `scrollTo`: an item index to bring on screen anyway (a whole-file
   // comment, whose card is at the top of the diff).
   openBox(cx, scrollTo = -1) {
+    this.anchor = null;
     this.rebuild();
     this.note.focus();
     if (scrollTo >= 0) this.scroll.scroll_to_item(scrollTo);
@@ -720,22 +734,22 @@ export default class Changes extends View {
         .when(editing, (e) => e.child(div().flex_1()).child(link("comment-delete", "Delete", t.ansi1, (_e, cx) => this.deleteComment(cx), "Remove this comment from the review"))));
   }
 
-  item(it, t, colors, target, commented) {
+  item(it, t, colors, target, commented, cur) {
     const width = (this.size?.width ?? 368) - 60;
     if (it.kind === "comment") {
       const span = it.whole ? "whole file" : it.from === it.to ? `line ${this.rows[it.from].number}` : `lines ${this.rows[it.from].number}–${this.rows[it.to].number}`;
       return div().w_full().h(it.height).flex_none().pl(42).pr(12).py(4).cursor_pointer()
-        .child(v_flex().max_w(width).rounded(8).border_1().border_color(it.live ? t.accent : t.accent + "66").bg(t.surface).px(10).py(6).gap(3)
+        .child(v_flex().max_w(width).rounded(8).border_1().border_color(it.live || cur ? t.accent : t.accent + "66").bg(t.surface).px(10).py(6).gap(3)
           .child(div().text_size(10).text_color(it.live ? t.accent : t.dim).child(it.live ? `Comment · ${span} · editing` : `Comment · ${span} · click to edit`))
           .child(div().text_size(this.fontSize).whitespace_normal().text_color(it.text ? t.foreground : t.dim).child(it.text || "(empty)")));
     }
     if (it.kind === "fold") {
-      return h_flex().w_full().h(this.row).flex_none().items_center().cursor_pointer().bg(t.raised + "80").text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground))
+      return h_flex().w_full().h(this.row).flex_none().items_center().cursor_pointer().bg(cur ? t.hover : t.raised + "80").text_color(cur ? t.foreground : t.dim).border_l(2).border_color(cur ? t.accent : NONE).hover((s) => s.bg(t.hover).text_color(t.foreground))
         .child(div().w(this.gutter + 16).flex_none().text_center().child("⋯"))
         .child(div().flex_1().min_w(0).truncate().text_size(this.fontSize - 1).child(`${it.count} unchanged line${it.count > 1 ? "s" : ""} · click to show`));
     }
     const { kind, number, spans } = this.rows[it.i], i = it.i;
-    const on = target && i >= target.from && i <= target.to, mark = commented.has(i);
+    const on = cur || (target && i >= target.from && i <= target.to), mark = commented.has(i);
     if (kind === "@") {
       return h_flex().w_full().h(this.row).flex_none().items_center().cursor_pointer().bg(t.raised).border_l(2).border_color(on ? t.accent : NONE)
         .child(div().w(this.gutter + 16).flex_none()).child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(spans[0].text));
@@ -766,18 +780,20 @@ export default class Changes extends View {
     const t = theme(), colors = palette(props()?.palette, t), add = this.files.reduce((n, f) => n + f.add, 0), del = this.files.reduce((n, f) => n + f.del, 0);
     const enabled = Boolean(this.message.trim() && this.root && !this.busy && !this.loading);
     const target = this.target(), n = this.comments.length, canAsk = Boolean(this.open && this.rows.length);
+    const keys = this.handle.is_focused(), cur = keys ? this.cursor() : -1, lit = target ?? (keys ? this.marked() : null);
     const commented = new Set();
     for (const it of this.items) if (it.kind === "comment") for (let j = it.from; j <= it.to; j++) commented.add(j);
     const perFile = {};
     for (const c of this.comments) perFile[c.path] = (perFile[c.path] ?? 0) + 1;
     const button = (id, label, primary, action) => div().id(id).h(24).px(10).flex().items_center().rounded(6).bg(primary ? t.solid : t.raised).text_color(primary ? t.solid_foreground : t.foreground).text_size(12).font_medium().cursor_pointer().hover((s) => s.opacity(0.88)).on_click(action).child(label);
     const link = (id, label, action) => div().id(id).h(24).px(8).flex().items_center().rounded(6).text_size(12).text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).on_click(action).child(label);
-    return v_flex().id("changes").size_full().min_h(0).relative().rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13).track_focus(this.handle)
+    return v_flex().id("changes").size_full().min_h(0).relative().rounded(10).overflow_hidden().bg(t.background).border_1().border_color(keys ? t.accent : t.border).text_color(t.foreground).text_size(13).track_focus(this.handle)
       .on_size_change((size, cx) => { const w = this.size?.width; this.size = size; if (w !== size.width) { this.rebuild(); cx.notify(); } })
       .on_key_down((e, cx) => {
         if (e.key === "escape" && this.typing) { this.typing = false; this.handle.focus(); cx.stop_propagation(); cx.notify(); }
         else if (e.key === "escape" && this.composer) { this.closeComposer(cx); cx.stop_propagation(); }
         else if (e.key === "enter" && (e.modifiers?.platform || e.modifiers?.control) && this.composer) { this.addComment(cx); cx.stop_propagation(); }
+        else if (this.handle.is_focused()) this.onKey(e, cx);
       })
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .child(div().font_semibold().child("Changes"))
@@ -811,12 +827,13 @@ export default class Changes extends View {
         .child(div().flex_1().min_w(0).min_h(0).relative().font_family(codeFont()).text_size(this.fontSize)
         .child(div().id("changes-diff-x").size_full().overflow_x_scrollbar()
           .child(div().w_full().min_w(this.diffWidth).h_full().child(v_virtual_list("changes-diff", this.items.length, this.sizes.length ? this.sizes : this.row, (i) => this.items[i].key,
-            (range) => this.items.slice(range.start, range.end).map((it) => this.item(it, t, colors, target, commented))).size_full().track_scroll(this.scroll)
+            (range) => this.items.slice(range.start, range.end).map((it, j) => this.item(it, t, colors, lit, commented, range.start + j === cur))).size_full().track_scroll(this.scroll)
             .on_item_click((k, cx) => { if (k.startsWith("f:")) this.unfold(Number(k.slice(2)), cx); else if (k.startsWith("c:")) { if (k.slice(2) !== this.composer?.editing) this.editComment(k.slice(2), cx); } else this.clickRow(Number(k.slice(2)), cx); })
             .on_item_secondary_click((k, _e, cx) => { if (!k.startsWith("r:")) return; const i = Number(k.slice(2)); const r = this.rows[i]; if (!r || r.kind === "") return; this.askAbout(r.kind === "@" ? this.rows.map((_r, j) => j).filter((j) => this.rows[j].hunk === i && this.rows[j].kind !== "") : [i], cx); }))))
         .child(Scrollbar.vertical("changes-diff").viewport_from_layout().absolute().inset_0())
         .when(!this.open && this.files.length > 0, (e) => e.child(div().absolute().top(6).px(12).text_color(t.dim).child("Select a file to view its changes")))
-        .when(canAsk && !this.composer && n === 0, (e) => e.child(div().absolute().bottom(6).right(14).px(8).py(3).rounded(6).bg(t.raised + "e0").text_size(10).text_color(t.dim).child("Click a line to comment · right-click to ask"))))
+        .when(canAsk && !this.composer && (n === 0 || keys), (e) => e.child(div().absolute().bottom(6).right(14).px(8).py(3).rounded(6).bg(t.raised + "e0").text_size(10).text_color(t.dim)
+          .child(keys ? (this.anchor === null ? "]/[ hunk · n/p file · v range · c comment · a ask · h back" : "j/k widen · c comment · a ask · Esc cancel") : "Click a line to comment · right-click to ask"))))
         // The comment box, a card floating over the top-right of the diff while it is open (a strip below it on a narrow panel).
         .when(Boolean(this.composer) && !this.narrow(), (e) => e.child(this.box(t, target, false))))
       // Narrow panel: the comment box is a strip under the diff instead of a column beside it.
@@ -825,6 +842,82 @@ export default class Changes extends View {
       .child(h_flex().flex_none().p(10).gap(8).border_t(1).border_color(t.border)
         .child(div().id("commit-message").flex_1().min_w(0).h(32).px(10).flex().items_center().rounded(8).border_1().border_color(this.typing ? t.accent : t.border).cursor_text().on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Input.new(this.input).h_full().text_size(12).text_color(t.foreground)))
         .child(div().id("commit").h(32).px(14).flex().items_center().rounded(8).bg(enabled ? t.solid : t.raised).text_color(enabled ? t.solid_foreground : t.dim).text_size(12).when(enabled, (e) => e.cursor_pointer()).on_click((_e, cx) => this.commit(cx)).child(this.busy ? "Committing…" : "Commit")));
+  }
+
+  // The cursor's item index (the first item when its key is gone), and its row:
+  // a comment's last line, a fold's first.
+  cursor() { const i = this.items.findIndex((it) => it.key === this.cursorKey); return i < 0 ? 0 : i; }
+  cursorRow() {
+    const it = this.items[this.cursor()];
+    return !it ? -1 : it.kind === "row" ? it.i : it.kind === "fold" ? this.gaps[it.gap][0] : it.to;
+  }
+  moveTo(i) {
+    if (!this.items.length) return;
+    i = Math.max(0, Math.min(i, this.items.length - 1));
+    this.cursorKey = this.items[i].key; this.scroll.scroll_to_item(i);
+  }
+  // The rows from the anchor to the cursor while a range is marked.
+  marked() {
+    const c = this.cursorRow();
+    return this.anchor === null || c < 0 ? null : { from: Math.min(this.anchor, c), to: Math.max(this.anchor, c) };
+  }
+  // The next (dir 1) or previous (-1) hunk header from the cursor.
+  jumpHunk(dir) {
+    for (let i = this.cursor() + dir; i >= 0 && i < this.items.length; i += dir) {
+      const it = this.items[i];
+      if (it.kind === "row" && this.rows[it.i].kind === "@") return this.moveTo(i);
+    }
+  }
+  nextFile(dir, cx) {
+    const i = this.files.findIndex((f) => f.path === this.open), next = this.files[i < 0 ? 0 : i + dir];
+    if (!next || next.path === this.open) return;
+    this.pick(next.path, cx); this.scroll.scroll_to_item(0);
+  }
+  // Enter: what a click on the cursor's item does; with a range marked, comment on it.
+  activate(cx) {
+    const m = this.marked(), it = this.items[this.cursor()];
+    if (m) { this.composer = { path: this.open, from: desc(this.rows[m.from]), to: desc(this.rows[m.to]), editing: null }; this.openBox(cx); }
+    else if (!it) return;
+    else if (it.kind === "fold") { this.cursorKey = `r:${this.gaps[it.gap][0]}`; this.unfold(it.gap, cx); }
+    else if (it.kind === "comment") this.editComment(it.id, cx);
+    else this.clickRow(it.i, cx);
+  }
+  // What a right-click on the cursor's row does, or asks about the marked range.
+  askHere(cx) {
+    const m = this.marked(), i = this.cursorRow(), r = this.rows[i];
+    if (m) { this.anchor = null; this.askAbout(this.rows.map((_r, j) => j).filter((j) => j >= m.from && j <= m.to && this.rows[j].kind !== ""), cx); }
+    else if (r && r.kind !== "") this.askAbout(r.kind === "@" ? this.rows.map((_r, j) => j).filter((j) => this.rows[j].hunk === i && this.rows[j].kind !== "") : [i], cx);
+  }
+  // Rows the diff has room for: the panel less its header, file list and commit box.
+  viewRows() {
+    const list = Math.min(200, Math.max(44, this.files.length * 28 + 12));
+    return Math.max(4, Math.floor(((this.size?.height ?? 600) - 42 - list - 53) / this.row));
+  }
+  onKey(e, cx) {
+    const m = e.modifiers ?? {}, k = e.key.length === 1 ? e.key_char ?? e.key : e.key;
+    if (m.control && (k === "d" || k === "u")) this.moveTo(this.cursor() + (k === "d" ? 1 : -1) * Math.floor(this.viewRows() / 2));
+    else if (m.control || m.platform || m.alt) return;
+    else switch (k) {
+      case "j": case "down": this.moveTo(this.cursor() + 1); break;
+      case "k": case "up": this.moveTo(this.cursor() - 1); break;
+      case "g": this.moveTo(0); break;
+      case "G": this.moveTo(this.items.length - 1); break;
+      case "]": this.jumpHunk(1); break;
+      case "[": this.jumpHunk(-1); break;
+      case "n": this.nextFile(1, cx); break;
+      case "p": this.nextFile(-1, cx); break;
+      case "v": this.anchor = this.anchor === null && this.cursorRow() >= 0 ? this.cursorRow() : null; break;
+      case "enter": case "c": this.activate(cx); break;
+      case "C": if (this.open) this.commentFile(this.open, cx); break;
+      case "a": this.askHere(cx); break;
+      case "s": this.submit(cx); break;
+      case "f": this.toggleFull(cx); break;
+      case "r": this.refresh(cx); break;
+      case "escape": if (this.anchor !== null) { this.anchor = null; break; } // falls through: nothing marked
+      case "h": run("pane.go", { direction: "left" }); break;
+      default: return;
+    }
+    cx.stop_propagation(); cx.notify();
   }
 
   pick(path, cx) {
