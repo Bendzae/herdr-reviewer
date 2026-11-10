@@ -146,6 +146,8 @@ export default class Changes extends View {
     // The keyboard's line, as an item key so it stays put when the list is rebuilt;
     // `anchor`: the row a range started on (v), or null.
     this.cursorKey = null; this.anchor = null;
+    // How far the file list is scrolled, in px (see fileList).
+    this.filesTop = 0;
     this.scope = "work"; this.sha = null; this.scopeInfo = null; this.choosingScope = false; this.range = ["HEAD"]; this.log = null;
     this.input = InputState.new({ placeholder: "Commit message" });
     this.input.on("change", (_e, cx) => {
@@ -203,7 +205,7 @@ export default class Changes extends View {
     // for the same id, so a repo whose git keeps failing is read once, not in a loop.
     this.tried = request?.id ?? this.tried;
     if (context !== this.context) {
-      this.context = context; this.root = null; this.log = null; this.files = []; this.open = null; this.comments = []; this.composer = null;
+      this.context = context; this.root = null; this.log = null; this.files = []; this.open = null; this.comments = []; this.composer = null; this.filesTop = 0;
       this.setLines([]); this.message = ""; this.input.set_value(""); this.error = null; this.note_ = null; this.watched = null; this.closed = false; this.limited = false;
     }
     if (!cwd) return;
@@ -777,6 +779,7 @@ export default class Changes extends View {
     // The dialog reports a sent review through a shared key; the draft goes.
     const sentAt = shared(SENT);
     if (this.submitting && typeof sentAt === "number" && sentAt >= this.submitting) { this.submitting = null; cx.timer.after(1, (cx) => this.setComments([], cx)); }
+    this.scrollFiles(this.filesTop);
     const t = theme(), colors = palette(props()?.palette, t), add = this.files.reduce((n, f) => n + f.add, 0), del = this.files.reduce((n, f) => n + f.del, 0);
     const enabled = Boolean(this.message.trim() && this.root && !this.busy && !this.loading);
     const target = this.target(), n = this.comments.length, canAsk = Boolean(this.open && this.rows.length);
@@ -807,7 +810,7 @@ export default class Changes extends View {
         .child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`−${del}`))
         .when(n > 0, (e) => e.child(link("review-discard", "Discard", (_e, cx) => this.setComments([], cx))).child(button("review-submit", `Submit review · ${n}`, true, (_e, cx) => this.submit(cx))))
         .when(n === 0 && canAsk, (e) => e.child(button("ask", "Ask about diff", false, (_e, cx) => this.askAbout(null, cx)))))
-      .child(v_flex().id("changes-list").flex_none().h(Math.min(200, Math.max(44, this.files.length * 28 + 12))).overflow_y_scrollbar().p(6).border_b(1).border_color(t.border).children(this.files.map((f) => {
+      .child(this.fileList(t, v_flex().absolute().left(0).right(0).top(-this.filesTop).p(6).children(this.files.map((f) => {
         const parts = f.path.split("/"), name = parts.pop(), k = perFile[f.path];
         return h_flex().id(`change-${f.path}`).h(28).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer().when(this.open === f.path, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(f.path, cx))
           .child(div().w(14).text_size(11).text_color(f.status === "A" ? t.ansi2 : f.status === "D" ? t.ansi1 : f.status === "U" ? t.ansi1 : t.blocked).child(f.status))
@@ -821,7 +824,7 @@ export default class Changes extends View {
             .on_click((_e, cx) => { cx.stop_propagation(); this.commentFile(f.path, cx); })
             .when(Boolean(k), (e) => e.child(String(k))).child(svg("mods/reviewer/comment.svg").size(k ? 10 : 12)))
           .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`))).when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
-      })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (this.loading ? "Loading changes…" : !this.root ? "No folder" : this.scope === "work" ? "No uncommitted changes" : "No changes in this scope")))))
+      })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (this.loading ? "Loading changes…" : !this.root ? "No folder" : this.scope === "work" ? "No uncommitted changes" : "No changes in this scope"))))))
       .when(this.limited, el => el.child(div().px(12).py(4).text_size(11).text_color(t.dim).child("Showing the first 1,000 changed files")))
       .child(h_flex().flex_1().min_h(0).items_stretch()
         .child(div().flex_1().min_w(0).min_h(0).relative().font_family(codeFont()).text_size(this.fontSize)
@@ -869,9 +872,10 @@ export default class Changes extends View {
     }
   }
   nextFile(dir, cx) {
-    const i = this.files.findIndex((f) => f.path === this.open), next = this.files[i < 0 ? 0 : i + dir];
+    const i = this.files.findIndex((f) => f.path === this.open), at = i < 0 ? 0 : i + dir, next = this.files[at];
     if (!next || next.path === this.open) return;
     this.pick(next.path, cx); this.scroll.scroll_to_item(0);
+    this.scrollFiles(6 + at * 28 + 14 - this.filesHeight() / 2);
   }
   // Enter: what a click on the cursor's item does; with a range marked, comment on it.
   activate(cx) {
@@ -890,8 +894,19 @@ export default class Changes extends View {
   }
   // Rows the diff has room for: the panel less its header, file list and commit box.
   viewRows() {
-    const list = Math.min(200, Math.max(44, this.files.length * 28 + 12));
-    return Math.max(4, Math.floor(((this.size?.height ?? 600) - 42 - list - 53) / this.row));
+    return Math.max(4, Math.floor(((this.size?.height ?? 600) - 42 - this.filesHeight() - 53) / this.row));
+  }
+  // The file list scrolls itself, `filesTop` px down: a plain scroll area
+  // can't be scrolled from code, and n / p keep the picked file centered.
+  filesHeight() { return Math.min(200, Math.max(44, this.files.length * 28 + 12)); }
+  scrollFiles(top) { this.filesTop = Math.max(0, Math.min(top, this.files.length * 28 + 12 - this.filesHeight())); }
+  fileList(t, rows) {
+    const view = this.filesHeight(), content = this.files.length * 28 + 12;
+    const thumb = content > view ? Math.max(24, view * view / content) : 0;
+    return div().id("changes-list").flex_none().h(view).relative().overflow_hidden().border_b(1).border_color(t.border)
+      .on_scroll_wheel((e, cx) => { this.scrollFiles(this.filesTop - e.delta.y); cx.notify(); })
+      .child(rows)
+      .when(thumb > 0, (el) => el.child(div().absolute().right(2).w(4).rounded(2).bg(t.border).top((view - thumb) * this.filesTop / (content - view)).h(thumb)));
   }
   onKey(e, cx) {
     const m = e.modifiers ?? {}, k = e.key.length === 1 ? e.key_char ?? e.key : e.key;
