@@ -34,7 +34,8 @@
 // its own; "reviewer.scope" cycles the first three.
 // Props: { palette: "one-dark-pro" | "theme" | "dark-plus" (default: one-dark-pro),
 //          font_size: px (default: the terminal's font size minus one),
-//          base: the branch reviews are against (default: origin/HEAD, else main, else master) }.
+//          base: the branch reviews are against when the branch has no
+//                `gh-merge-base` (default: origin/HEAD, else main, else master) }.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, Scrollbar, v_virtual_list, VirtualListScrollHandle, Popover } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, nextCommand, props, shared, setShared } from "herdr";
@@ -317,13 +318,16 @@ export default class Changes extends View {
   }
 
   // What this repo can be reviewed against: its branch, the base branch
-  // (props.base, else origin/HEAD, else main, else master), the merge
+  // (its gh-merge-base, else props.base, else origin/HEAD, else main, else master), the merge
   // base with it (null when on the base itself), HEAD's short hash
   // when it has a parent, and the picked commit `sha` (null when it is gone).
   async scopes(git, sha) {
     const out = async (args) => { const r = await git(args); return r.code === 0 ? r.stdout.trim() : null; };
     const branch = await out(["rev-parse", "--abbrev-ref", "HEAD"]);
-    let base = typeof props()?.base === "string" ? props().base : null;
+    // The branch's own base first: `branch.<name>.gh-merge-base`, where `gh` keeps
+    // it (and `gh pr create` reads it), so a stacked branch is reviewed against its parent.
+    let base = branch && branch !== "HEAD" ? await out(["config", `branch.${branch}.gh-merge-base`]) : null;
+    if (!base && typeof props()?.base === "string") base = props().base;
     if (!base) { const h = await out(["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]); if (h) base = h.replace(/^refs\/remotes\/origin\//, ""); }
     if (!base) for (const b of ["main", "master"]) { if (await out(["rev-parse", "--verify", "-q", `refs/heads/${b}`]) !== null) { base = b; break; } }
     let merge = null;

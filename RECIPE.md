@@ -126,7 +126,8 @@ fill, `foreground` text at 13px. Top to bottom:
   branch (vs main: everything since the branch left it, committed or not,
   the pull-request view); or a commit picked from the list, on its own:
   `git diff <commit>~1 <commit>` (the empty tree for a root commit), with
-  no untracked files or conflicts, since the working tree isn't part of it. The base branch is `props.base`, else
+  no untracked files or conflicts, since the working tree isn't part of it. The base branch is the branch's
+  `branch.<name>.gh-merge-base` git config, else `props.base`, else
   `origin/HEAD`'s branch, else `main`, else `master`; the merge base is
   taken against the local branch when there is one, else `origin/<base>`.
   A repo opens in "vs main" when the branch has left the base, else

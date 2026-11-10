@@ -129,6 +129,10 @@ Block props: `palette` (`one-dark-pro`, `dark-plus` or `theme`),
 `font_size` (overrides the diff's size), `base` (the branch *vs main*
 compares against; default `origin/HEAD`, else `main`, else `master`).
 
+A branch with its own base set in git config, the way `gh` keeps it
+(`git config branch.<branch>.gh-merge-base <base>`), is compared against
+that instead, so a branch stacked on another one shows only its own changes.
+
 ## Open a file from another mod
 
 Write a one-shot request with Herdr's `setShared`:
