@@ -112,6 +112,27 @@ each release is tagged `v<version>` in this repo. Installed copies carry no
 git history, so quote that field when reporting a problem. Version 0.6.0 was
 last tested on Herdr 0.1.13 (`herdr-app` 0.1.13, `herdr` 0.9.5).
 
+## Keyboard
+
+Herdr's `pane.go` (`ctrl-b l` from the pane beside it) moves the keyboard
+onto the panel; its border lights up and a cursor shows on the diff.
+
+| Key | Does |
+|---|---|
+| `j` `k` / arrows | Move the cursor a line |
+| `ctrl-d` `ctrl-u` | Half a screen down, up |
+| `g` `G` | First, last line |
+| `]` `[` | Next, previous hunk |
+| `n` `p` | Next, previous file |
+| `v` | Mark a range from the cursor (again, or Esc, to drop it) |
+| `Enter` `c` | Comment on the line, hunk header or marked range; on a fold, show it; on a comment, edit it |
+| `C` | Comment on the whole file |
+| `a` | Ask about the line, hunk or marked range |
+| `s` | Submit the review |
+| `f` | *Full file* on or off |
+| `r` | Reload |
+| `h` `Esc` | Back to the pane on the left |
+
 ## Commands and props
 
 Bind these in `keys.json` if you want keys for them (none are bound by
